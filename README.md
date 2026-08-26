@@ -5,7 +5,8 @@ Research materials for Eating Trajectory study stored here
 
 ## NOTEBOOK
 
-### 25 August 2026 | 3:58 pm - 8:12 pm
+### Most recent:
+**25 August 2026 | 3:58 pm - 8:12 pm**
 **Primary objective:** Create slides, update GitHub documentation, test scripts, and build hyperparameter tuning pipeline
 
 My primary objective for the day was to get some testing done, now that I had access to the computer. In the middle of this, I found out that my github documentation was on the wrong account. I had to restart it from scratch, completely scrapping the other account's documents for consistency.
