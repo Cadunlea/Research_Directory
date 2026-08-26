@@ -4,6 +4,28 @@ Research materials for Eating Trajectory study stored here
 
 <b>NOTEBOOK</b>
 
+25 August 2026, 8:55 am - 9:45 pm
+Primary objective: Experiment with variations of the current model
+
+Since I was not able to access the computer in the lab due to Kenzy using it, I worked with variations of the current model. I looked for potential bugs and adjusted parts of the code the Siavash asked for.
+
+Added Configurable label rule  compute_food_indicator()
+Was hardcoded to the three-way OR; now a switchable rule (default "bout_or_bite")
+bout_or_bite: food = (Chew Bout > 0) OR (Bite > 0)
+bout_only: food = (Chew Bout > 0)
+bite_only: food = (Bite > 0)
+count_or_bout_or_bite: original rule, food = (Chew Count > 0) OR (Chew Bout > 0) OR (Bite > 0)
+Added classification error rate in  metrics_from_probabilities()
+error_rate = 1 - accuracy
+Mean absolute error in metrics_from_probabilities()
+mean_absolute_error = mean( |y_true_i - probability_i| ) over all i windows
+This is the literal "absolute error," computed on the raw sigmoid probability output, not the thresholded 0/1 prediction so it's sensitive to how confident the model was.
+Per-participant missing-data table participant_diagnostics, written to participant_missing_fraction_report.csv
+Per participant/session:
+mean_missing_fraction = mean over that session's kept windows of (fraction of samples equal to -1)
+plus span overlap, window counts, and whether it was excluded. This was already printed to console in the original version. Now it is also collected it into a table and wrote to CSV.
+
+
 23 August 2026, 4:05 pm - 6:44 pm
 Primary objective: Work on a parameter tuning script prototype
 I created a working prototype of parameter tuning to go along with the machine learning model previously made. At first, I thought about putting the parameter tuning inside of the ML script, but decided against it for convenience. I am not yet sure if it is compatible with the script, since it appeared that Kenzy was using the computer at this time. I also worked on learning how to create parameter tuning scripts, and how to possibly get the data into a csv.
