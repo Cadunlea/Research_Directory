@@ -12,11 +12,13 @@ Research materials for Eating Trajectory study stored here
 My primary objective for the day was to get some testing done, now that I had access to the computer. In the middle of this, I found out that my github documentation was on the wrong account. I had to restart it from scratch, completely scrapping the other account's documents for consistency.
 Below is a description of how that hyperparameter tuning testing worked. It took a long hours to run in the background. My goal was to obtain graphs I could use for the slides. As I waited for the script to finish, I created documentation for the github and created the slides that I will use for tomorrow's meeting.
 
+**Work Completed & Code Adjustments:**
 * **Created Hyperparameter Sweep Script:** Imports the baseline training script as a module, reusing dataset construction, FFT feature extraction, train/val/test splits, and threshold-sweep evaluation functions.
 * **Parameterized Model Architecture:** Implemented `ParamFrequencyCNN` and `train_model_with_params` to accept variable arguments (learning rate, batch size, dropout, channel widths, and positive-class weight scale) rather than using hardcoded values.
 * **Fixed Data Split:** Pre-computes the train/val/test participant split once at startup so all grid search configurations train and validate on identical data.
 * **Grid Search & Multi-Seed Runs:** Evaluates every hyperparameter combination across multiple random seeds to measure performance stability and account for weight initialization/batch shuffling noise.
 * **Threshold Evaluation & Logging:** Tests models against the baseline threshold grid (0.30–0.90) for direct comparison. Progressively logs individual runs to CSV and aggregates mean/standard deviation metrics per configuration.
+* **Slides and Documentation:** Corrected the GitHub documentation issue, and worked on slides for tomorrow's meeting
 
 ---
 
