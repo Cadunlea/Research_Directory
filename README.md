@@ -18,6 +18,8 @@ Below is a description of how that hyperparameter tuning testing worked. It took
 * **Grid Search & Multi-Seed Runs:** Evaluates every hyperparameter combination across multiple random seeds to measure performance stability and account for weight initialization/batch shuffling noise.
 * **Threshold Evaluation & Logging:** Tests models against the baseline threshold grid (0.30–0.90) for direct comparison. Progressively logs individual runs to CSV and aggregates mean/standard deviation metrics per configuration.
 
+---
+
 **25 August 2026, 8:55 am - 9:45 pm**  
 **Primary objective:** Experiment with variations of the current model
 
