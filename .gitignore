@@ -1,0 +1,5 @@
+drift_check_outputs/
+__pycache__/
+*.pyc
+fft_food_intake_outputs*/
+jitai_config.ini
