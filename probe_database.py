@@ -457,23 +457,86 @@ def report_join(conn) -> None:
         print(f"    participants present in both tables: "
               f"{len(shared_participants)}")
 
-    # Per-session detail: annotated span vs sensor coverage.
-    print(f"\n  {'participant':<12}{'studyID':<14}{'GT idents':<18}"
-          f"{'sensor packets':>15}{'sensor span':>28}")
+    # Per-session detail. The question that decides whether a session is usable
+    # is not "does this participant have sensor data somewhere" but "are there
+    # sensor packets DURING the annotated window". A participant can have
+    # thousands of packets and still none that overlap the video.
+    print(f"\n  {'participant':<12}{'study':<14}{'annotated window (UTC)':<38}"
+          f"{'mins':>6}{'pkts in window':>15}{'cover':>7}  status")
+    usable = 0
     for (participant, study), entry in sorted(sessions.items()):
-        idents = ",".join(sorted(entry["identifiers"]))
-        packets = query(conn,
-                        f"SELECT COUNT(*), MIN(data_timestamp), MAX(data_timestamp) "
-                        f"FROM {RAW_DB}.numeric_data "
-                        f"WHERE data_identifier=%s AND participantID=%s",
-                        (SENSOR_IDENTIFIER, participant))
-        count, first, last = packets[0]
-        if count:
-            span = (f"{posix2datetime(first).strftime('%Y-%m-%d %H:%M')} .. "
-                    f"{posix2datetime(last).strftime('%H:%M')}")
+        span = annotated_window(conn, participant, study)
+        if span is None:
+            print(f"  {participant:<12}{study:<14}"
+                  f"{'annotation is entirely -1':<38}{'':>6}{'':>15}{'':>7}  UNUSABLE")
+            continue
+        start_ts, end_ts, eating_share = span
+        minutes = (end_ts - start_ts) / 60.0
+
+        count = query(conn,
+                      f"SELECT COUNT(*) FROM {RAW_DB}.numeric_data "
+                      f"WHERE data_identifier=%s AND participantID=%s "
+                      f"AND data_timestamp BETWEEN %s AND %s",
+                      (SENSOR_IDENTIFIER, participant,
+                       int(start_ts) - 16, int(end_ts) + 16))[0][0]
+        expected = max(1, int((end_ts - start_ts) / 8))
+        coverage = count / expected
+        if count == 0:
+            status = "NO SENSOR DATA IN WINDOW"
+        elif coverage < 0.5:
+            status = "partial"
         else:
-            span = "NO SENSOR DATA"
-        print(f"  {participant:<12}{study:<14}{idents:<18}{count:>15,}{span:>28}")
+            status = "ok"
+            usable += 1
+
+        window = (f"{posix2datetime(start_ts).strftime('%Y-%m-%d %H:%M')} .. "
+                  f"{posix2datetime(end_ts).strftime('%Y-%m-%d %H:%M')}")
+        print(f"  {participant:<12}{study:<14}{window:<38}{minutes:>6.0f}"
+              f"{count:>15,}{coverage:>6.0%}  {status}")
+
+    print(f"\n  USABLE SESSIONS (sensor data covering the annotation): "
+          f"{usable} of {len(sessions)}")
+    if usable < len(sessions):
+        print("  Sessions marked NO SENSOR DATA IN WINDOW have ground truth whose")
+        print("  day does not line up with any sensor packets. Check the upload")
+        print("  before dismissing them - the annotation date may be wrong.")
+
+
+def annotated_window(conn, participant: str,
+                     study: str) -> Optional[Tuple[float, float, float]]:
+    """(start_ts, end_ts, eating_fraction) of the annotated video for a session.
+
+    Eating is 'chew bout OR bite' - a bout is sustained chewing and a bite is
+    food entering the mouth. Chew count is excluded: it is a rate, not a state.
+    """
+    rows = query(conn,
+                 f"SELECT data_identifier, data_timestamp, data_sampling_frequency, "
+                 f"data_ndarray_pickle FROM {STUDY_DB}.numeric_data "
+                 f"WHERE participantID=%s AND studyID=%s "
+                 f"AND data_identifier IN ('BOGT','BIGT')",
+                 (participant, study))
+    arrays, day_start, frequency = {}, None, 10.0
+    for identifier, timestamp, freq, blob in rows:
+        array = unpickle(blob)
+        if array is None:
+            continue
+        arrays[identifier] = array.ravel()
+        day_start, frequency = int(timestamp), float(freq or 10.0)
+    if "BOGT" not in arrays or "BIGT" not in arrays or day_start is None:
+        return None
+
+    bout, bite = arrays["BOGT"], arrays["BIGT"]
+    length = min(len(bout), len(bite))
+    bout, bite = bout[:length], bite[:length]
+    known = (bout != MISSING) | (bite != MISSING)
+    present = np.flatnonzero(known)
+    if present.size == 0:
+        return None
+    first, last = int(present[0]), int(present[-1])
+    eating = ((bout > 0) | (bite > 0))[first:last + 1]
+    return (day_start + first / frequency,
+            day_start + (last + 1) / frequency,
+            float(eating.mean()))
 
 
 def dump_session(conn, participant: str) -> None:
