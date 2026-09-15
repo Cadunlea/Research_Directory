@@ -40,17 +40,41 @@ that?".
    stay comparable with Model A and with the previous model - see
    ets_train.aligned_mask.
 
-6. TEMPORAL SMOOTHING OF THE OUTPUT
-   Eating is contiguous. A single positive window surrounded by negatives is
-   almost always an error, and a median filter removes those without blurring
-   the edges of a real bout. Reported both with and without, so the gain from
-   smoothing is visible rather than hidden.
+6. TEMPORAL SMOOTHING OF THE OUTPUT - TRIED, AND IT DOES NOT WORK HERE
+   The idea was that eating is contiguous, so an isolated positive window is
+   probably an error a median filter would remove. On the real data it LOWERED
+   both precision and recall (F1 0.853 -> 0.770 at 8 s). Losing both is the
+   signature of destroyed information rather than a mis-set threshold: a median
+   over three 8 s windows spans 24 s and assumes contiguity the labels do not
+   have. Eating here is `bout OR bite`, and real meals are punctuated - bite,
+   chew, swallow, pause, talk, bite - so at 8 s resolution the label sequence
+   genuinely flips on and off, and the filter erases short but real bouts. This
+   is the same fact the lab's own pause metrics (PADU) exist to measure.
+   Kept, off by default in spirit (--smoothing 1 disables it), and still
+   reported so the negative result is visible rather than buried.
+
+7. CONTEXT WINDOWS - the principled version of what smoothing attempted
+   --context-seconds widens the SIGNAL the model sees either side of the
+   labelled window while leaving the label alone. Rather than asserting
+   afterwards that neighbouring windows should agree, it lets the model look at
+   them and learn how much they matter. A window whose own signal is ambiguous
+   can be resolved by chewing immediately before and after it, while a genuine
+   pause inside a meal keeps its own label - which is exactly the distinction
+   the median filter could not make.
+
+8. SEED ENSEMBLING
+   --ensemble N trains N copies at different initialisations and averages them.
+   Fold-to-fold spread is +-0.05 F1 on this dataset, a good part of which is
+   initialisation noise rather than genuine difficulty; averaging cancels some
+   of it. It adds no capacity and no new assumption, only stability - which is
+   why it is defensible at this data size when a bigger model would not be.
 
 DELIBERATELY NOT DONE
-    No transformer, no pretrained backbone, no ensemble of ten models. With
-    roughly 5 hours of annotated data a large model would overfit and be harder
-    to defend, not easier. Every gain here comes from representing the data
-    properly, not from parameter count.
+    No transformer, no pretrained backbone. With roughly 8 hours of annotated
+    data a large model would overfit and be harder to defend, not easier. Every
+    gain here comes from representing the data properly, not from parameter
+    count. (Seed ensembling is not extra capacity: every member is the same
+    small network.)
 
 USAGE
 -----
@@ -58,6 +82,10 @@ USAGE
     python train_food_intake_v2.py --config ... --sweep-windows
     python train_food_intake_v2.py --config ... --no-auxiliary   (ablation)
     python train_food_intake_v2.py --config ... --window-seconds 4
+
+    the two improvements, most promising first:
+    python train_food_intake_v2.py --config ... --context-seconds 8
+    python train_food_intake_v2.py --config ... --context-seconds 8 --ensemble 3
 """
 
 from __future__ import annotations
@@ -183,18 +211,24 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
     hop = window_seconds / 2.0 if args.overlap else window_seconds
     windows = ets_data.get_windows(args, window_seconds, hop_seconds=hop,
                                    cache_dir=args.cache_dir,
-                                   rebuild=args.rebuild_cache)
+                                   rebuild=args.rebuild_cache,
+                                   context_seconds=args.context_seconds)
 
     results, _ = ets_train.cross_validate(
         windows, time_domain_features,
         lambda shape: build_model(shape, auxiliary=auxiliary),
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
         batch_size=BATCH_SIZE, patience=PATIENCE, auxiliary=auxiliary,
-        smoothing_kernel=args.smoothing, verbose=True)
+        smoothing_kernel=args.smoothing, n_models=args.ensemble, verbose=True)
 
+    extras = ""
+    if args.context_seconds:
+        extras += f" + {args.context_seconds:g}s context"
+    if args.ensemble > 1:
+        extras += f" + {args.ensemble}-model ensemble"
     label = (f"MODEL B  time-domain CNN + attention"
              f"{' + auxiliary chew head' if auxiliary else ' (no auxiliary head)'}"
-             f"  ({window_seconds:g}s windows)")
+             f"{extras}  ({window_seconds:g}s windows)")
     summary = ets_eval.report(label, [r.metrics for r in results])
     smoothed = ets_eval.report(f"{label}  + temporal smoothing",
                                [r.smoothed_metrics for r in results])
@@ -202,6 +236,8 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
     return {
         "window_seconds": window_seconds,
         "hop_seconds": hop,
+        "context_seconds": args.context_seconds,
+        "ensemble": args.ensemble,
         "auxiliary": auxiliary,
         "windows": windows.summary(),
         "folds": [{"fold": r.fold, "held_out": r.held_out,
@@ -222,8 +258,20 @@ def main() -> int:
                         help="ablation: drop the chew-count head")
     parser.add_argument("--no-overlap", dest="overlap", action="store_false",
                         help="ablation: train on non-overlapping windows only")
+    parser.add_argument("--context-seconds", type=float, default=0.0,
+                        help="extra signal shown to the model either side of "
+                             "the labelled window (the label is unchanged). "
+                             "Try 8: it is the principled replacement for "
+                             "post-hoc median smoothing")
+    parser.add_argument("--ensemble", type=int, default=1,
+                        help="train N models per fold at different seeds and "
+                             "average them (try 3); N times slower")
     parser.add_argument("--smoothing", type=int, default=3,
-                        help="median filter width in windows (1 disables)")
+                        help="median filter width in windows (1 disables). "
+                             "Measured HARMFUL at 8 s on the real data: eating "
+                             "is punctuated by pauses at that resolution, so "
+                             "the filter erases short genuine bouts. Prefer "
+                             "--context-seconds")
     parser.add_argument("--folds", type=int, default=4)
     parser.add_argument("--seed", type=int, default=9)
     parser.add_argument("--epochs", type=int, default=MAX_EPOCHS)

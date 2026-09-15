@@ -294,14 +294,17 @@ class WindowSet:
     missing: np.ndarray         # (n,) float32   fraction of -1 sensor samples
     window_seconds: float
     hop_seconds: float
+    context_seconds: float = 0.0    # extra signal each side; label is unchanged
 
     def __len__(self) -> int:
         return len(self.y)
 
     def summary(self) -> str:
         positives = int(self.y.sum())
+        context = (f", {self.context_seconds:g}s context each side"
+                   if self.context_seconds else "")
         return (f"{len(self):,} windows of {self.window_seconds:g}s "
-                f"(hop {self.hop_seconds:g}s) from "
+                f"(hop {self.hop_seconds:g}s{context}) from "
                 f"{len(np.unique(self.participants))} participants: "
                 f"{positives:,} eating ({positives / max(len(self), 1):.1%}), "
                 f"{len(self) - positives:,} not")
@@ -309,6 +312,7 @@ class WindowSet:
 
 def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
                   hop_seconds: Optional[float] = None,
+                  context_seconds: float = 0.0,
                   verbose: bool = True) -> WindowSet:
     """Cut every session's annotated span into windows.
 
@@ -316,9 +320,21 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
     treating it as 'not eating' would bury ~16 minutes of real annotation under
     24 hours of fabricated negatives - the majority-class collapse that makes a
     model look accurate while predicting one class.
+
+    `context_seconds` widens the SIGNAL handed to the model by that much on each
+    side while leaving the LABEL defined by the centre window alone. This is the
+    principled version of what post-hoc median smoothing tried and failed to do:
+    instead of asserting afterwards that eating is contiguous - which at 8 s
+    resolution it is not, since real meals contain pauses between bites - it
+    lets the model see what happened either side and learn for itself how much
+    the neighbourhood matters. A window whose own signal is ambiguous can be
+    resolved by chewing immediately before and after it; a genuine pause inside
+    a meal still keeps its own label.
     """
     hop_seconds = hop_seconds or window_seconds
     window_samples = int(round(window_seconds * SENSOR_FS))
+    context_samples = int(round(context_seconds * SENSOR_FS))
+    input_samples = window_samples + 2 * context_samples
 
     X_parts, y_parts, chew_parts = [], [], []
     participants, studies, starts, missing_parts = [], [], [], []
@@ -334,7 +350,12 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
         span_start = session.day_start + first / frequency
         span_end = session.day_start + (last + 1) / frequency
 
-        sensor = load_sensor(conn, session, span_start, span_end)
+        # Fetch the context margin either side too. Where the margin runs past
+        # the annotated span the sensor array simply holds -1, which normalise()
+        # already treats as missing, so edge windows are not special-cased.
+        sensor = load_sensor(conn, session,
+                             span_start - context_seconds,
+                             span_end + context_seconds)
         eating = session.eating()
         chew = session.chew
 
@@ -344,9 +365,12 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
         offset = 0.0
         while offset + window_seconds <= (span_end - span_start):
             n_windows += 1
+            # sensor[] starts context_seconds BEFORE the annotated span, so the
+            # centre window begins at offset + context_samples and the block
+            # extends context_samples either side of it.
             start_sample = int(round(offset * SENSOR_FS))
-            block = sensor[start_sample:start_sample + window_samples]
-            if len(block) < window_samples:
+            block = sensor[start_sample:start_sample + input_samples]
+            if len(block) < input_samples:
                 break
 
             gt_lo = first + int(round(offset * frequency))
@@ -369,6 +393,8 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
             chew_parts.append(chew_marks)
             participants.append(session.participant)
             studies.append(session.study)
+            # The recorded start is the CENTRE window's start, not the block's,
+            # so smoothing and the non-overlapping grid still line up.
             starts.append(span_start + (start_sample / SENSOR_FS))
             missing_parts.append(missing_fraction)
             kept += 1
@@ -393,15 +419,18 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
         studies=np.asarray(studies),
         starts=np.asarray(starts, dtype=np.float64),
         missing=np.asarray(missing_parts, dtype=np.float32),
-        window_seconds=window_seconds, hop_seconds=hop_seconds)
+        window_seconds=window_seconds, hop_seconds=hop_seconds,
+        context_seconds=context_seconds)
 
 
 # --------------------------------------------------------------------------- #
 # caching
 # --------------------------------------------------------------------------- #
-def cache_path(cache_dir: Path, window_seconds: float,
-               hop_seconds: float) -> Path:
+def cache_path(cache_dir: Path, window_seconds: float, hop_seconds: float,
+               context_seconds: float = 0.0) -> Path:
     tag = f"w{window_seconds:g}_h{hop_seconds:g}"
+    if context_seconds:
+        tag += f"_c{context_seconds:g}"
     return Path(cache_dir) / f"ets_windows_{tag}.npz"
 
 
@@ -411,7 +440,8 @@ def save_cache(windows: WindowSet, path: Path) -> None:
         path, X=windows.X, y=windows.y, chews=windows.chews,
         participants=windows.participants, studies=windows.studies,
         starts=windows.starts, missing=windows.missing,
-        window_seconds=windows.window_seconds, hop_seconds=windows.hop_seconds)
+        window_seconds=windows.window_seconds, hop_seconds=windows.hop_seconds,
+        context_seconds=windows.context_seconds)
 
 
 def load_cache(path: Path) -> WindowSet:
@@ -421,15 +451,19 @@ def load_cache(path: Path) -> WindowSet:
         participants=data["participants"], studies=data["studies"],
         starts=data["starts"], missing=data["missing"],
         window_seconds=float(data["window_seconds"]),
-        hop_seconds=float(data["hop_seconds"]))
+        hop_seconds=float(data["hop_seconds"]),
+        context_seconds=float(data["context_seconds"])
+        if "context_seconds" in data else 0.0)
 
 
 def get_windows(args, window_seconds: float, hop_seconds: Optional[float] = None,
                 cache_dir: str = "ets_cache", rebuild: bool = False,
+                context_seconds: float = 0.0,
                 verbose: bool = True) -> WindowSet:
     """Windows from cache, or built from the database and then cached."""
     hop_seconds = hop_seconds or window_seconds
-    path = cache_path(Path(cache_dir), window_seconds, hop_seconds)
+    path = cache_path(Path(cache_dir), window_seconds, hop_seconds,
+                      context_seconds)
     if path.is_file() and not rebuild:
         windows = load_cache(path)
         if verbose:
@@ -443,6 +477,7 @@ def get_windows(args, window_seconds: float, hop_seconds: Optional[float] = None
         if verbose:
             print(f"{len(sessions)} session(s) with ground truth\n")
         windows = build_windows(conn, sessions, window_seconds, hop_seconds,
+                                context_seconds=context_seconds,
                                 verbose=verbose)
     finally:
         conn.close()

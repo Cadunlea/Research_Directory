@@ -133,6 +133,7 @@ def cross_validate(
         inner_validation_participants: int = 3,
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
+        n_models: int = 1,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -173,8 +174,17 @@ def cross_validate(
         fit_rows = train_rows[~inner_mask]
         validation_rows = train_rows[inner_mask]
 
-        set_seed(seed + index)
-        model = build_model(features.shape[1:])
+        # An ensemble of the SAME architecture at different seeds. With ~5-8
+        # hours of data a single network's decision boundary depends noticeably
+        # on initialisation - the fold-to-fold spread is +-0.05 F1 - and
+        # averaging several runs cancels part of that variance. It adds no
+        # capacity and no new assumption, only stability, which is why it is
+        # defensible on a dataset this size where a bigger model would not be.
+        models = []
+        for member in range(n_models):
+            set_seed(seed + index * 100 + member)
+            models.append(build_model(features.shape[1:]))
+        model = models[0]
 
         y_fit = windows.y[fit_rows].astype(np.float32)
         y_validation = windows.y[validation_rows].astype(np.float32)
@@ -195,20 +205,29 @@ def cross_validate(
             targets_fit, targets_validation = y_fit, y_validation
             fit_kwargs = dict(class_weight=class_weights(windows.y[fit_rows]))
 
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=patience,
-                restore_best_weights=True, verbose=0),
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss", factor=0.5, patience=max(3, patience // 3),
-                min_lr=1e-5, verbose=0),
-        ]
+        def make_callbacks():
+            """Fresh callbacks per ensemble member. Callbacks carry state -
+            EarlyStopping keeps the best weights and the wait counter - so
+            reusing one instance across members would let the first member's
+            history stop the second before it had trained."""
+            return [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_loss", patience=patience,
+                    restore_best_weights=True, verbose=0),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor="val_loss", factor=0.5,
+                    patience=max(3, patience // 3), min_lr=1e-5, verbose=0),
+            ]
 
-        history = model.fit(
-            features[fit_rows], targets_fit,
-            validation_data=(features[validation_rows], targets_validation),
-            epochs=epochs, batch_size=batch_size, callbacks=callbacks,
-            verbose=0, **fit_kwargs)
+        history = None
+        for member, member_model in enumerate(models):
+            member_history = member_model.fit(
+                features[fit_rows], targets_fit,
+                validation_data=(features[validation_rows], targets_validation),
+                epochs=epochs, batch_size=batch_size,
+                callbacks=make_callbacks(), verbose=0, **fit_kwargs)
+            if history is None:
+                history = member_history
 
         def predict(rows: np.ndarray) -> np.ndarray:
             """Food-intake probability for these rows.
@@ -220,17 +239,21 @@ def cross_validate(
             model eagerly in fixed-size batches avoids both the warning and the
             repeated compilation.
             """
-            chunks = []
-            for start in range(0, len(rows), 256):
-                batch = features[rows[start:start + 256]]
-                output = model(batch, training=False)
-                if isinstance(output, dict):
-                    output = output["food"]
-                elif isinstance(output, (list, tuple)):
-                    output = output[0]
-                chunks.append(np.asarray(output).ravel())
-            return (np.concatenate(chunks) if chunks
-                    else np.zeros(0, dtype=np.float32))
+            if len(rows) == 0:
+                return np.zeros(0, dtype=np.float32)
+            total = np.zeros(len(rows), dtype=np.float64)
+            for member_model in models:
+                chunks = []
+                for start in range(0, len(rows), 256):
+                    batch = features[rows[start:start + 256]]
+                    output = member_model(batch, training=False)
+                    if isinstance(output, dict):
+                        output = output["food"]
+                    elif isinstance(output, (list, tuple)):
+                        output = output[0]
+                    chunks.append(np.asarray(output).ravel())
+                total += np.concatenate(chunks)
+            return total / len(models)
 
         # Threshold from the inner validation participants only, and chosen on
         # the SAME non-overlapping windows the test fold is scored on, so the
@@ -274,7 +297,8 @@ def cross_validate(
 
         if verbose:
             epochs_run = len(history.history["loss"])
-            print(f"  fold {index + 1}  held out {', '.join(held_out):<46} "
+            members = f" x{len(models)}" if len(models) > 1 else ""
+            print(f"  fold {index + 1}{members}  held out {', '.join(held_out):<46} "
                   f"n={len(test_rows):>5,}  F1 {fold_metrics['f1']:.3f} "
                   f"(smoothed {smoothed_metrics['f1']:.3f})  "
                   f"acc {fold_metrics['accuracy']:.3f}  thr {threshold:.2f}  "
