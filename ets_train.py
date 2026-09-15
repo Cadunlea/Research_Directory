@@ -125,7 +125,12 @@ def cross_validate(
         epochs: int = 60,
         batch_size: int = 64,
         patience: int = 10,
-        inner_validation_participants: int = 2,
+        # Three, not two. On the first real run the four folds chose thresholds
+        # of 0.31, 0.67, 0.28 and 0.29 - the 0.67 is a threshold fitted to two
+        # people rather than to the task, and it cost that fold precision.
+        # A third participant steadies the estimate; the fit set is still 12 of
+        # the 15 training participants.
+        inner_validation_participants: int = 3,
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
@@ -206,17 +211,47 @@ def cross_validate(
             verbose=0, **fit_kwargs)
 
         def predict(rows: np.ndarray) -> np.ndarray:
-            output = model.predict(features[rows], batch_size=256, verbose=0)
-            if isinstance(output, (list, tuple)):
-                output = output[0]
-            elif isinstance(output, dict):
-                output = output["food"]
-            return np.asarray(output).ravel()
+            """Food-intake probability for these rows.
 
-        # Threshold from the inner validation participants only.
-        validation_probability = predict(validation_rows)
+            Calls the model directly instead of model.predict(). predict()
+            builds a compiled tf.function keyed on the input signature, and
+            each fold feeds it a differently sized array, so TensorFlow retraces
+            and prints a retracing warning several times per run. Calling the
+            model eagerly in fixed-size batches avoids both the warning and the
+            repeated compilation.
+            """
+            chunks = []
+            for start in range(0, len(rows), 256):
+                batch = features[rows[start:start + 256]]
+                output = model(batch, training=False)
+                if isinstance(output, dict):
+                    output = output["food"]
+                elif isinstance(output, (list, tuple)):
+                    output = output[0]
+                chunks.append(np.asarray(output).ravel())
+            return (np.concatenate(chunks) if chunks
+                    else np.zeros(0, dtype=np.float32))
+
+        # Threshold from the inner validation participants only, and chosen on
+        # the SAME non-overlapping windows the test fold is scored on, so the
+        # conditions it was selected under match the conditions it is used in.
+        validation_eval_rows = validation_rows[evaluate_on[validation_rows]]
+        validation_probability = predict(validation_eval_rows)
         threshold = ets_eval.choose_threshold(
-            windows.y[validation_rows], validation_probability, "f1")
+            windows.y[validation_eval_rows], validation_probability, "f1")
+
+        # Smoothing needs its OWN threshold. A median filter pulls each value
+        # toward its neighbours, which shifts the probability distribution;
+        # reusing the unsmoothed threshold measures that mismatch rather than
+        # the effect of smoothing, and made smoothing look harmful (F1 0.777 ->
+        # 0.730 on the first real run) when it had not been given a fair test.
+        smoothed_validation = ets_eval.smooth_predictions(
+            validation_probability, windows.starts[validation_eval_rows],
+            windows.participants[validation_eval_rows],
+            windows.window_seconds, windows.window_seconds,
+            kernel=smoothing_kernel)
+        smoothed_threshold = ets_eval.choose_threshold(
+            windows.y[validation_eval_rows], smoothed_validation, "f1")
 
         test_probability = predict(test_rows)
         pooled_probability[test_rows] = test_probability
@@ -228,7 +263,7 @@ def cross_validate(
             windows.participants[test_rows], windows.window_seconds,
             windows.window_seconds, kernel=smoothing_kernel)
         smoothed_metrics = ets_eval.metrics(windows.y[test_rows], smoothed,
-                                            threshold)
+                                            smoothed_threshold)
 
         results.append(FoldResult(
             fold=index + 1, held_out=list(held_out), threshold=threshold,
