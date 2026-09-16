@@ -125,12 +125,14 @@ def cross_validate(
         epochs: int = 60,
         batch_size: int = 64,
         patience: int = 10,
-        # Three, not two. On the first real run the four folds chose thresholds
-        # of 0.31, 0.67, 0.28 and 0.29 - the 0.67 is a threshold fitted to two
-        # people rather than to the task, and it cost that fold precision.
-        # A third participant steadies the estimate; the fit set is still 12 of
-        # the 15 training participants.
-        inner_validation_participants: int = 3,
+        # Two. It was briefly raised to three to steady a wild threshold (0.67
+        # on one fold), but a held-out participant is ~7% of the training data
+        # here, and both models lost ground when it went up: Model A pooled F1
+        # 0.777 -> 0.765, Model B 0.853 -> 0.828. Threshold stability is now
+        # handled where it belongs - in ets_eval.choose_threshold, which takes
+        # the centre of the plateau rather than the argmax - so it no longer has
+        # to be bought with training data.
+        inner_validation_participants: int = 2,
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
         n_models: int = 1,
@@ -255,13 +257,24 @@ def cross_validate(
                 total += np.concatenate(chunks)
             return total / len(models)
 
-        # Threshold from the inner validation participants only, and chosen on
-        # the SAME non-overlapping windows the test fold is scored on, so the
-        # conditions it was selected under match the conditions it is used in.
-        validation_eval_rows = validation_rows[evaluate_on[validation_rows]]
-        validation_probability = predict(validation_eval_rows)
+        # Threshold from the inner validation participants only.
+        #
+        # ALL their windows, including the overlapping ones. Restricting this to
+        # the non-overlapping grid (to mirror test conditions exactly) halves
+        # the data the threshold is estimated from, and a threshold is a single
+        # scalar: overlapping windows do not bias it, they only weight some
+        # stretches of a meal slightly more. Model B lost more than Model A when
+        # this was restricted, which fits - Model A trains on a hop equal to its
+        # window, so the restriction changed nothing for it.
+        validation_probability = predict(validation_rows)
         threshold = ets_eval.choose_threshold(
-            windows.y[validation_eval_rows], validation_probability, "f1")
+            windows.y[validation_rows], validation_probability, "f1")
+
+        # Smoothing is different: the median filter walks along consecutive
+        # windows, so its threshold MUST be estimated at the same spacing the
+        # test fold is smoothed at. Selected on the non-overlapping grid.
+        validation_eval_rows = validation_rows[evaluate_on[validation_rows]]
+        smoothed_eval_probability = predict(validation_eval_rows)
 
         # Smoothing needs its OWN threshold. A median filter pulls each value
         # toward its neighbours, which shifts the probability distribution;
@@ -269,7 +282,7 @@ def cross_validate(
         # the effect of smoothing, and made smoothing look harmful (F1 0.777 ->
         # 0.730 on the first real run) when it had not been given a fair test.
         smoothed_validation = ets_eval.smooth_predictions(
-            validation_probability, windows.starts[validation_eval_rows],
+            smoothed_eval_probability, windows.starts[validation_eval_rows],
             windows.participants[validation_eval_rows],
             windows.window_seconds, windows.window_seconds,
             kernel=smoothing_kernel)
