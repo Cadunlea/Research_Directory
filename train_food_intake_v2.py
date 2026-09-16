@@ -57,10 +57,15 @@ that?".
    --context-seconds widens the SIGNAL the model sees either side of the
    labelled window while leaving the label alone. Rather than asserting
    afterwards that neighbouring windows should agree, it lets the model look at
-   them and learn how much they matter. A window whose own signal is ambiguous
-   can be resolved by chewing immediately before and after it, while a genuine
-   pause inside a meal keeps its own label - which is exactly the distinction
-   the median filter could not make.
+   them and learn how much they matter.
+
+   FIRST ATTEMPT FAILED, and the reason is instructive. Plain 8 s context cost
+   F1 0.854 -> 0.775, precision 0.876 -> 0.683, while recall ROSE to 0.894. The
+   model had 24 s of signal and no way to tell which 8 s it was being asked
+   about, so it learned the easier question - eating SOMEWHERE in the 24 s -
+   and fired on every window next to a meal. A marker channel (see
+   mark_target_window) now identifies the labelled window. Whether that is
+   enough is an open question, not a claim.
 
 8. SEED ENSEMBLING
    --ensemble N trains N copies at different initialisations and averages them.
@@ -115,6 +120,30 @@ DROPOUT = 0.3
 # Window lengths for the resolution sweep. Powers of two in seconds, as the
 # 128 Hz sampling rate and the 8 s packet size both are.
 SWEEP_WINDOWS = (2.0, 4.0, 8.0, 16.0)
+
+
+def mark_target_window(features: np.ndarray, windows) -> np.ndarray:
+    """Append a channel that is 1 over the LABELLED window and 0 over context.
+
+    Without it, context makes the model worse, badly: 8 s of context either
+    side cost F1 0.854 -> 0.775, with precision collapsing 0.876 -> 0.683 while
+    recall ROSE to 0.894. That pattern is the giveaway. Given 24 s of signal and
+    no indication of which 8 s it is being asked about, and attention pooling
+    free to attend anywhere in them, the model answers an easier question -
+    "is there eating SOMEWHERE in this 24 s?" - and so fires on every window
+    adjacent to a meal, which is precisely where the false positives appeared.
+
+    One extra channel tells it where the question is. The context is still
+    available to disambiguate; it is no longer mistakable for the subject.
+    """
+    if not getattr(windows, "context_seconds", 0.0):
+        return features
+    total = features.shape[1]
+    context = int(round(windows.context_seconds * ets_data.SENSOR_FS))
+    marker = np.zeros((1, total, 1), dtype=np.float32)
+    marker[0, context:total - context, 0] = 1.0
+    return np.concatenate(
+        [features, np.repeat(marker, features.shape[0], axis=0)], axis=2)
 
 
 def time_domain_features(X: np.ndarray) -> np.ndarray:
@@ -214,8 +243,11 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
                                    rebuild=args.rebuild_cache,
                                    context_seconds=args.context_seconds)
 
+    def transform(X):
+        return mark_target_window(time_domain_features(X), windows)
+
     results, _ = ets_train.cross_validate(
-        windows, time_domain_features,
+        windows, transform,
         lambda shape: build_model(shape, auxiliary=auxiliary),
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
         batch_size=BATCH_SIZE, patience=PATIENCE, auxiliary=auxiliary,

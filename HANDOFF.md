@@ -31,17 +31,28 @@ threshold, threshold estimated from all inner-participant windows):
 | Model | F1 | Accuracy | Balanced acc | Precision | Recall |
 |---|---|---|---|---|---|
 | Previous (PyTorch, CSVs) | 0.788 | 0.803 | 0.825 | 0.684 | 0.929 |
-| Model A (same net, new data) | *stale — re-run* | | | | |
-| **Model B** | **0.854** | **0.905** | **0.887** | **0.876** | **0.834** |
+| Model A (same net, new data) | 0.779 | 0.841 | 0.840 | 0.730 | 0.836 |
+| **Model B** | **0.854** | **0.905** | **0.887** | **0.876** | 0.834 |
+| Model B, no chew head | 0.849 | 0.900 | 0.885 | 0.857 | 0.841 |
+| Model B + 8 s context (no marker) | 0.775 | 0.825 | 0.842 | 0.683 | 0.894 |
 
 Both targets beaten. Model B's big win is precision, 0.684 → 0.876, which is
 where the time-domain input and attention pooling were predicted to help.
 Confusion: tp=980 fp=139 fn=195 tn=2189. Per-fold F1 0.920 / 0.801 / 0.807 /
 0.852, sd 0.048. Thresholds 0.46 / 0.30 / 0.21 / 0.18.
 
-**Model A must be re-run** on this harness before the pair is quoted together -
-its last figure (0.765) came from the 3-participant variant. Three minutes off
-the cache.
+A and B above are on the same harness and are directly comparable. A -> B is
++0.075 F1, +0.064 accuracy, and +0.146 precision.
+
+ABLATIONS RUN SO FAR
+- Auxiliary chew head: +0.0056 F1 (0.849 -> 0.854), +0.019 precision, and the
+  gain sits almost entirely in fold 2, the fold holding the weakest optical
+  signal (AIM109345, drift r=0.41). Direction matches the motivation; the
+  magnitude is INSIDE the +-0.048 fold spread, so it must be reported as
+  "consistent with, but not separable from, variance at n=20" and never as a
+  demonstrated improvement.
+- 8 s context WITHOUT a target marker: -0.080 F1. See the negative results
+  section - this one has a diagnosis and a fix worth testing.
 
 Protocol history, since the numbers moved twice and a reader may ask:
 3 inner participants + threshold restricted to non-overlapping validation
@@ -129,9 +140,22 @@ and short but real bouts get erased. This is the same fact the lab's own pause
 metrics (PADU) exist to measure. Publishable as a negative result with a
 mechanism.
 
-`--context-seconds` is the principled replacement: widen the signal the model
-sees, leave the label alone, let the model learn how much the neighbourhood
-matters. Untested on real data as of this writing.
+### Context windows, first attempt: also negative, and diagnosable
+
+`--context-seconds 8` cost F1 0.854 -> 0.775. The pattern says why: precision
+COLLAPSED 0.876 -> 0.683 while recall ROSE 0.834 -> 0.894. The model became
+much more willing to call eating.
+
+Diagnosis: it was given 24 s of signal and no indication of which 8 s it was
+being asked about, with attention pooling free to attend anywhere in them. So
+it learned the easier question - "is there eating SOMEWHERE in this 24 s?" -
+which fires on every window adjacent to a meal, exactly where the extra false
+positives are.
+
+Fix implemented, NOT YET TESTED on real data: a fifth input channel that is 1
+over the labelled window and 0 over the context (v2.mark_target_window). Run
+`--context-seconds 8` again to test it. If it still loses, context is simply
+not helping here and that is the finding - do not keep tuning it.
 
 ## Files
 
