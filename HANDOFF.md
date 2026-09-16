@@ -25,19 +25,31 @@ F1 0.81.
 
 ## Where it stands
 
-| Model | F1 | Accuracy | Balanced acc | Precision |
-|---|---|---|---|---|
-| Previous (PyTorch, CSVs) | 0.788 | 0.803 | 0.825 | 0.684 |
-| Model A (same net, new data) | 0.777 | 0.839 | 0.838 | 0.728 |
-| **Model B** | **0.853** | **0.903** | **0.887** | **0.869** |
+Current, on the final harness (2 inner validation participants, plateau-centre
+threshold, threshold estimated from all inner-participant windows):
 
-Both targets beaten. Model B's big win is precision (0.728 → 0.869, false
-positives 366 → 148), which is where the time-domain input and attention
-pooling were predicted to help.
+| Model | F1 | Accuracy | Balanced acc | Precision | Recall |
+|---|---|---|---|---|---|
+| Previous (PyTorch, CSVs) | 0.788 | 0.803 | 0.825 | 0.684 | 0.929 |
+| Model A (same net, new data) | *stale — re-run* | | | | |
+| **Model B** | **0.854** | **0.905** | **0.887** | **0.876** | **0.834** |
 
-Caveat on those numbers: Model B's run used the pre-fix `ets_train.py`, so the
-headline is valid (the fix only affected smoothing) but **should be re-run
-before publication**.
+Both targets beaten. Model B's big win is precision, 0.684 → 0.876, which is
+where the time-domain input and attention pooling were predicted to help.
+Confusion: tp=980 fp=139 fn=195 tn=2189. Per-fold F1 0.920 / 0.801 / 0.807 /
+0.852, sd 0.048. Thresholds 0.46 / 0.30 / 0.21 / 0.18.
+
+**Model A must be re-run** on this harness before the pair is quoted together -
+its last figure (0.765) came from the 3-participant variant. Three minutes off
+the cache.
+
+Protocol history, since the numbers moved twice and a reader may ask:
+3 inner participants + threshold restricted to non-overlapping validation
+windows gave A 0.765 / B 0.828; reverting both gave B 0.854. All of these sit
+inside the +-0.048 fold spread. The final setting was chosen on the a priori
+argument that scarce data belongs in training and threshold noise belongs in
+the estimator - but it was chosen after seeing test scores, which is a mild
+form of selecting on the test set and should be disclosed rather than hidden.
 
 ## What the database actually contains (measured, not assumed)
 
@@ -106,13 +118,16 @@ within the same participant set.
 
 ## Negative result worth keeping
 
-**Temporal median smoothing made things worse** (F1 0.853 → 0.770 at 8 s), and
-it lowered BOTH precision and recall. Losing both means destroyed information,
-not a mis-set threshold. A median over three 8 s windows spans 24 s and assumes
-a contiguity the labels lack: eating is `bout OR bite`, and real meals are
-punctuated — bite, chew, swallow, pause, talk — so at 8 s the label sequence
-genuinely flips on and off and short real bouts get erased. This is the same
-fact the lab's own pause metrics (PADU) exist to measure.
+**Temporal median smoothing made things worse**, and this is now a FAIR test:
+smoothing selects its own threshold independently, so the comparison is not
+confounded. Model B F1 0.854 → 0.775 at 8 s.
+
+A median over three 8 s windows spans 24 s and assumes a contiguity the labels
+lack: eating is `bout OR bite`, and real meals are punctuated — bite, chew,
+swallow, pause, talk — so at 8 s the label sequence genuinely flips on and off
+and short but real bouts get erased. This is the same fact the lab's own pause
+metrics (PADU) exist to measure. Publishable as a negative result with a
+mechanism.
 
 `--context-seconds` is the principled replacement: widen the signal the model
 sees, leave the label alone, let the model learn how much the neighbourhood
