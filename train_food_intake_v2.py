@@ -158,8 +158,14 @@ def time_domain_features(X: np.ndarray) -> np.ndarray:
     return ets_data.normalise(X, high_pass=True)
 
 
-def build_model(input_shape, auxiliary: bool = True):
-    """Two convolution blocks -> channel attention -> attention pooling -> heads."""
+def build_model(input_shape, auxiliary: bool = True, attention: bool = True):
+    """Two convolution blocks -> channel attention -> attention pooling -> heads.
+
+    `attention=False` is the ablation: both attention mechanisms are replaced by
+    plain global average pooling, leaving the same convolution trunk. It
+    isolates what the attention actually contributes, rather than leaving it
+    bundled with everything else Model B changed at once.
+    """
     import tensorflow as tf
     from tensorflow.keras import layers
 
@@ -181,6 +187,13 @@ def build_model(input_shape, auxiliary: bool = True):
     x = layers.Conv1D(64, 5, padding="same")(x)
     x = layers.BatchNormalization()(x)
     features = layers.ReLU()(x)
+
+    if not attention:
+        # The ablation: average over time, the way Model A does.
+        pooled = layers.GlobalAveragePooling1D(name="average_pool")(features)
+        shared = layers.Dense(64, activation="relu")(pooled)
+        shared = layers.Dropout(DROPOUT)(shared)
+        return _heads(inputs, shared, auxiliary, "ets_cnn_v2_no_attention")
 
     # --- cross-channel attention -------------------------------------------
     # Squeeze each learned channel to one number, learn a gate from those, and
@@ -205,11 +218,19 @@ def build_model(input_shape, auxiliary: bool = True):
 
     shared = layers.Dense(64, activation="relu")(pooled)
     shared = layers.Dropout(DROPOUT)(shared)
+    return _heads(inputs, shared, auxiliary, "ets_cnn_v2")
+
+
+def _heads(inputs, shared, auxiliary: bool, name: str):
+    """The output heads and compilation, shared by both trunk variants so an
+    ablation cannot accidentally differ in how it is trained."""
+    import tensorflow as tf
+    from tensorflow.keras import layers
 
     food = layers.Dense(1, activation="sigmoid", name="food")(shared)
 
     if not auxiliary:
-        model = tf.keras.Model(inputs, food, name="ets_cnn_v2")
+        model = tf.keras.Model(inputs, food, name=name)
         model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
                       loss="binary_crossentropy", metrics=["accuracy"])
         return model
@@ -224,7 +245,7 @@ def build_model(input_shape, auxiliary: bool = True):
     # dict; with a list it matches by position and a dict of targets fails with
     # a bare KeyError: 0.
     model = tf.keras.Model(inputs, {"food": food, "chews": chews},
-                           name="ets_cnn_v2_multitask")
+                           name=f"{name}_multitask")
     model.compile(
         optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
         loss={"food": "binary_crossentropy", "chews": "mse"},
@@ -243,17 +264,29 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
                                    rebuild=args.rebuild_cache,
                                    context_seconds=args.context_seconds)
 
-    def transform(X):
-        return mark_target_window(time_domain_features(X), windows)
+    if args.fft_input:
+        # The representation ablation: Model B's architecture fed Model A's
+        # features. Isolates what the time-domain input contributes, with the
+        # attention, the auxiliary head and the augmentation all held fixed.
+        def transform(X):
+            return ets_data.fft_features(X)
+    else:
+        def transform(X):
+            return mark_target_window(time_domain_features(X), windows)
 
     results, _ = ets_train.cross_validate(
         windows, transform,
-        lambda shape: build_model(shape, auxiliary=auxiliary),
+        lambda shape: build_model(shape, auxiliary=auxiliary,
+                                  attention=not args.no_attention),
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
         batch_size=BATCH_SIZE, patience=PATIENCE, auxiliary=auxiliary,
         smoothing_kernel=args.smoothing, n_models=args.ensemble, verbose=True)
 
     extras = ""
+    if args.fft_input:
+        extras += " + FFT input (not time domain)"
+    if args.no_attention:
+        extras += " (no attention)"
     if args.context_seconds:
         extras += f" + {args.context_seconds:g}s context"
     if args.ensemble > 1:
@@ -271,6 +304,8 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
         "context_seconds": args.context_seconds,
         "ensemble": args.ensemble,
         "auxiliary": auxiliary,
+        "attention": not args.no_attention,
+        "fft_input": args.fft_input,
         "windows": windows.summary(),
         "folds": [{"fold": r.fold, "held_out": r.held_out,
                    "threshold": r.threshold, "metrics": r.metrics,
@@ -288,6 +323,13 @@ def main() -> int:
                         help=f"train at each of {SWEEP_WINDOWS} and compare")
     parser.add_argument("--no-auxiliary", action="store_true",
                         help="ablation: drop the chew-count head")
+    parser.add_argument("--no-attention", action="store_true",
+                        help="ablation: replace cross-channel attention and "
+                             "attention pooling with global average pooling")
+    parser.add_argument("--fft-input", action="store_true",
+                        help="ablation: feed Model A's FFT magnitude features "
+                             "to Model B's architecture, isolating what the "
+                             "time-domain representation contributes")
     parser.add_argument("--no-overlap", dest="overlap", action="store_false",
                         help="ablation: train on non-overlapping windows only")
     parser.add_argument("--context-seconds", type=float, default=0.0,
