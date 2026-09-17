@@ -119,21 +119,38 @@ form of selecting on the test set and should be disclosed rather than hidden.
 Ports: **30071 is MariaDB** (what Python connects to), 30073 is phpMyAdmin (the
 browser page). Both are correct, for different things.
 
-## The 8-second shift does not exist — settled
+## Annotation alignment — verified on the new database
 
-The old code hardcoded `ANNOTATION_TIME_SHIFT_SECONDS = -8.0`.
-`check_annotation_drift.py` measured the real lag on all 20 sessions:
+Not a headline finding; a precondition that had to be checked before training
+on this data, and it passed.
+
+PROVENANCE, because it is easy to overstate: the `-8.0` shift was Caelan's own
+diagnostic correction in his previous model, on the OLD CSV-based pipeline. It
+was never applied by anyone else and never used elsewhere in the lab. The lab
+separately rebuilt the database and identified what may have caused the
+original misalignment. The job here was only to confirm the new database needs
+no correction.
+
+`check_annotation_drift.py` measured the lag on all 20 sessions:
 
 | `data_timestamp` read as | Median lag | Range | Within ±1 s |
 |---|---|---|---|
 | packet **start** | **+0.10 s** | +0.00 … +0.20 | **20/20** |
 | packet **end** | −7.90 s | −8.00 … −7.80 | 0/20 |
 
-Peak correlation identical either way (0.716 vs 0.715). Genuine drift degrades
-the correlation; a units error displaces it while preserving its shape.
-`data_timestamp` is the packet **start**. The old code computed
-`packet_start = data_timestamp - data_duration`, reading a start as an end, and
-that produced an artefact of exactly one 8 s packet.
+Peak correlation is identical either way (0.716 vs 0.715), which is what
+distinguishes a displacement from a degradation.
+
+THE MEASURED CLAIM, and the only one to make: on this database, read with
+`data_timestamp` as the packet START, the annotations are aligned to within
+0.2 s on every session. No correction is warranted.
+
+A HYPOTHESIS, not established: the two readings differ by exactly one 8 s
+packet, and the old training code computed `packet_start = data_timestamp -
+data_duration`, i.e. read a start timestamp as an end. That would produce an
+artefact of exactly the observed size. This is a plausible account of the old
+pipeline only - the database was rebuilt in the meantime and the lab has its
+own explanation, so do not present it as the cause of anything.
 
 **No shift is applied anywhere. Do not reintroduce one.**
 
