@@ -95,6 +95,16 @@ def make_windows(window_seconds=8.0, hop_seconds=None):
                                   hop_seconds or window_seconds, verbose=False)
 
 
+def make_windows_with_context(window_seconds=8.0, hop_seconds=None,
+                              context_seconds=0.0):
+    install_stub()
+    sessions = ets_data.load_sessions(None)
+    return ets_data.build_windows(None, sessions, window_seconds,
+                                  hop_seconds or window_seconds,
+                                  context_seconds=context_seconds,
+                                  verbose=False)
+
+
 # --------------------------------------------------------------------------- #
 # windowing
 # --------------------------------------------------------------------------- #
@@ -186,6 +196,36 @@ def test_no_participant_appears_in_both_sides_of_a_split():
                    set(windows.participants[test]))
         assert not overlap, f"leaked participants: {overlap}"
         assert len(train) + len(test) == len(windows)
+
+
+def test_context_widens_the_signal_without_touching_the_labels():
+    """--context-seconds must change ONLY what the model sees, never what it is
+    scored against. If it shifted the labels or the window starts, every
+    context run would be measured on a different target than the runs it is
+    being compared with - and the comparison would be meaningless while still
+    producing a plausible-looking number."""
+    plain = make_windows(8.0)
+    contextual = make_windows_with_context(8.0, context_seconds=8.0)
+
+    assert contextual.X.shape[1] == plain.X.shape[1] * 3, (
+        "8 s of context each side of an 8 s window should give 24 s of signal")
+    assert len(contextual) == len(plain), "context changed the window count"
+    assert np.array_equal(contextual.y, plain.y), "context changed the labels"
+    assert np.allclose(contextual.starts, plain.starts), (
+        "context moved the window starts, so smoothing and the "
+        "non-overlapping grid would no longer line up")
+    assert np.array_equal(contextual.chews, plain.chews)
+
+
+def test_context_at_the_edges_is_missing_not_fabricated():
+    """The first window has no real signal before it. That margin must arrive
+    as -1 (missing), which normalise() neutralises - never as zeros, which the
+    model would read as a genuine flat reading."""
+    contextual = make_windows_with_context(8.0, context_seconds=8.0)
+    first = contextual.X[np.argmin(contextual.starts)]
+    lead_in = first[:1024]
+    assert np.any(lead_in == ets_data.MISSING), (
+        "the pre-roll of the first window should contain missing samples")
 
 
 def test_overlapping_windows_are_halved_for_evaluation():

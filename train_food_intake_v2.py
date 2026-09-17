@@ -40,17 +40,46 @@ that?".
    stay comparable with Model A and with the previous model - see
    ets_train.aligned_mask.
 
-6. TEMPORAL SMOOTHING OF THE OUTPUT
-   Eating is contiguous. A single positive window surrounded by negatives is
-   almost always an error, and a median filter removes those without blurring
-   the edges of a real bout. Reported both with and without, so the gain from
-   smoothing is visible rather than hidden.
+6. TEMPORAL SMOOTHING OF THE OUTPUT - TRIED, AND IT DOES NOT WORK HERE
+   The idea was that eating is contiguous, so an isolated positive window is
+   probably an error a median filter would remove. On the real data it LOWERED
+   both precision and recall (F1 0.853 -> 0.770 at 8 s). Losing both is the
+   signature of destroyed information rather than a mis-set threshold: a median
+   over three 8 s windows spans 24 s and assumes contiguity the labels do not
+   have. Eating here is `bout OR bite`, and real meals are punctuated - bite,
+   chew, swallow, pause, talk, bite - so at 8 s resolution the label sequence
+   genuinely flips on and off, and the filter erases short but real bouts. This
+   is the same fact the lab's own pause metrics (PADU) exist to measure.
+   Kept, off by default in spirit (--smoothing 1 disables it), and still
+   reported so the negative result is visible rather than buried.
+
+7. CONTEXT WINDOWS - the principled version of what smoothing attempted
+   --context-seconds widens the SIGNAL the model sees either side of the
+   labelled window while leaving the label alone. Rather than asserting
+   afterwards that neighbouring windows should agree, it lets the model look at
+   them and learn how much they matter.
+
+   FIRST ATTEMPT FAILED, and the reason is instructive. Plain 8 s context cost
+   F1 0.854 -> 0.775, precision 0.876 -> 0.683, while recall ROSE to 0.894. The
+   model had 24 s of signal and no way to tell which 8 s it was being asked
+   about, so it learned the easier question - eating SOMEWHERE in the 24 s -
+   and fired on every window next to a meal. A marker channel (see
+   mark_target_window) now identifies the labelled window. Whether that is
+   enough is an open question, not a claim.
+
+8. SEED ENSEMBLING
+   --ensemble N trains N copies at different initialisations and averages them.
+   Fold-to-fold spread is +-0.05 F1 on this dataset, a good part of which is
+   initialisation noise rather than genuine difficulty; averaging cancels some
+   of it. It adds no capacity and no new assumption, only stability - which is
+   why it is defensible at this data size when a bigger model would not be.
 
 DELIBERATELY NOT DONE
-    No transformer, no pretrained backbone, no ensemble of ten models. With
-    roughly 5 hours of annotated data a large model would overfit and be harder
-    to defend, not easier. Every gain here comes from representing the data
-    properly, not from parameter count.
+    No transformer, no pretrained backbone. With roughly 8 hours of annotated
+    data a large model would overfit and be harder to defend, not easier. Every
+    gain here comes from representing the data properly, not from parameter
+    count. (Seed ensembling is not extra capacity: every member is the same
+    small network.)
 
 USAGE
 -----
@@ -58,6 +87,10 @@ USAGE
     python train_food_intake_v2.py --config ... --sweep-windows
     python train_food_intake_v2.py --config ... --no-auxiliary   (ablation)
     python train_food_intake_v2.py --config ... --window-seconds 4
+
+    the two improvements, most promising first:
+    python train_food_intake_v2.py --config ... --context-seconds 8
+    python train_food_intake_v2.py --config ... --context-seconds 8 --ensemble 3
 """
 
 from __future__ import annotations
@@ -89,6 +122,30 @@ DROPOUT = 0.3
 SWEEP_WINDOWS = (2.0, 4.0, 8.0, 16.0)
 
 
+def mark_target_window(features: np.ndarray, windows) -> np.ndarray:
+    """Append a channel that is 1 over the LABELLED window and 0 over context.
+
+    Without it, context makes the model worse, badly: 8 s of context either
+    side cost F1 0.854 -> 0.775, with precision collapsing 0.876 -> 0.683 while
+    recall ROSE to 0.894. That pattern is the giveaway. Given 24 s of signal and
+    no indication of which 8 s it is being asked about, and attention pooling
+    free to attend anywhere in them, the model answers an easier question -
+    "is there eating SOMEWHERE in this 24 s?" - and so fires on every window
+    adjacent to a meal, which is precisely where the false positives appeared.
+
+    One extra channel tells it where the question is. The context is still
+    available to disambiguate; it is no longer mistakable for the subject.
+    """
+    if not getattr(windows, "context_seconds", 0.0):
+        return features
+    total = features.shape[1]
+    context = int(round(windows.context_seconds * ets_data.SENSOR_FS))
+    marker = np.zeros((1, total, 1), dtype=np.float32)
+    marker[0, context:total - context, 0] = 1.0
+    return np.concatenate(
+        [features, np.repeat(marker, features.shape[0], axis=0)], axis=2)
+
+
 def time_domain_features(X: np.ndarray) -> np.ndarray:
     """Per-window, per-channel z-score with the mean removed and -1 excluded.
 
@@ -101,8 +158,14 @@ def time_domain_features(X: np.ndarray) -> np.ndarray:
     return ets_data.normalise(X, high_pass=True)
 
 
-def build_model(input_shape, auxiliary: bool = True):
-    """Two convolution blocks -> channel attention -> attention pooling -> heads."""
+def build_model(input_shape, auxiliary: bool = True, attention: bool = True):
+    """Two convolution blocks -> channel attention -> attention pooling -> heads.
+
+    `attention=False` is the ablation: both attention mechanisms are replaced by
+    plain global average pooling, leaving the same convolution trunk. It
+    isolates what the attention actually contributes, rather than leaving it
+    bundled with everything else Model B changed at once.
+    """
     import tensorflow as tf
     from tensorflow.keras import layers
 
@@ -124,6 +187,13 @@ def build_model(input_shape, auxiliary: bool = True):
     x = layers.Conv1D(64, 5, padding="same")(x)
     x = layers.BatchNormalization()(x)
     features = layers.ReLU()(x)
+
+    if not attention:
+        # The ablation: average over time, the way Model A does.
+        pooled = layers.GlobalAveragePooling1D(name="average_pool")(features)
+        shared = layers.Dense(64, activation="relu")(pooled)
+        shared = layers.Dropout(DROPOUT)(shared)
+        return _heads(inputs, shared, auxiliary, "ets_cnn_v2_no_attention")
 
     # --- cross-channel attention -------------------------------------------
     # Squeeze each learned channel to one number, learn a gate from those, and
@@ -148,11 +218,19 @@ def build_model(input_shape, auxiliary: bool = True):
 
     shared = layers.Dense(64, activation="relu")(pooled)
     shared = layers.Dropout(DROPOUT)(shared)
+    return _heads(inputs, shared, auxiliary, "ets_cnn_v2")
+
+
+def _heads(inputs, shared, auxiliary: bool, name: str):
+    """The output heads and compilation, shared by both trunk variants so an
+    ablation cannot accidentally differ in how it is trained."""
+    import tensorflow as tf
+    from tensorflow.keras import layers
 
     food = layers.Dense(1, activation="sigmoid", name="food")(shared)
 
     if not auxiliary:
-        model = tf.keras.Model(inputs, food, name="ets_cnn_v2")
+        model = tf.keras.Model(inputs, food, name=name)
         model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
                       loss="binary_crossentropy", metrics=["accuracy"])
         return model
@@ -167,7 +245,7 @@ def build_model(input_shape, auxiliary: bool = True):
     # dict; with a list it matches by position and a dict of targets fails with
     # a bare KeyError: 0.
     model = tf.keras.Model(inputs, {"food": food, "chews": chews},
-                           name="ets_cnn_v2_multitask")
+                           name=f"{name}_multitask")
     model.compile(
         optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
         loss={"food": "binary_crossentropy", "chews": "mse"},
@@ -183,18 +261,39 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
     hop = window_seconds / 2.0 if args.overlap else window_seconds
     windows = ets_data.get_windows(args, window_seconds, hop_seconds=hop,
                                    cache_dir=args.cache_dir,
-                                   rebuild=args.rebuild_cache)
+                                   rebuild=args.rebuild_cache,
+                                   context_seconds=args.context_seconds)
+
+    if args.fft_input:
+        # The representation ablation: Model B's architecture fed Model A's
+        # features. Isolates what the time-domain input contributes, with the
+        # attention, the auxiliary head and the augmentation all held fixed.
+        def transform(X):
+            return ets_data.fft_features(X)
+    else:
+        def transform(X):
+            return mark_target_window(time_domain_features(X), windows)
 
     results, _ = ets_train.cross_validate(
-        windows, time_domain_features,
-        lambda shape: build_model(shape, auxiliary=auxiliary),
+        windows, transform,
+        lambda shape: build_model(shape, auxiliary=auxiliary,
+                                  attention=not args.no_attention),
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
         batch_size=BATCH_SIZE, patience=PATIENCE, auxiliary=auxiliary,
-        smoothing_kernel=args.smoothing, verbose=True)
+        smoothing_kernel=args.smoothing, n_models=args.ensemble, verbose=True)
 
+    extras = ""
+    if args.fft_input:
+        extras += " + FFT input (not time domain)"
+    if args.no_attention:
+        extras += " (no attention)"
+    if args.context_seconds:
+        extras += f" + {args.context_seconds:g}s context"
+    if args.ensemble > 1:
+        extras += f" + {args.ensemble}-model ensemble"
     label = (f"MODEL B  time-domain CNN + attention"
              f"{' + auxiliary chew head' if auxiliary else ' (no auxiliary head)'}"
-             f"  ({window_seconds:g}s windows)")
+             f"{extras}  ({window_seconds:g}s windows)")
     summary = ets_eval.report(label, [r.metrics for r in results])
     smoothed = ets_eval.report(f"{label}  + temporal smoothing",
                                [r.smoothed_metrics for r in results])
@@ -202,7 +301,11 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
     return {
         "window_seconds": window_seconds,
         "hop_seconds": hop,
+        "context_seconds": args.context_seconds,
+        "ensemble": args.ensemble,
         "auxiliary": auxiliary,
+        "attention": not args.no_attention,
+        "fft_input": args.fft_input,
         "windows": windows.summary(),
         "folds": [{"fold": r.fold, "held_out": r.held_out,
                    "threshold": r.threshold, "metrics": r.metrics,
@@ -220,10 +323,29 @@ def main() -> int:
                         help=f"train at each of {SWEEP_WINDOWS} and compare")
     parser.add_argument("--no-auxiliary", action="store_true",
                         help="ablation: drop the chew-count head")
+    parser.add_argument("--no-attention", action="store_true",
+                        help="ablation: replace cross-channel attention and "
+                             "attention pooling with global average pooling")
+    parser.add_argument("--fft-input", action="store_true",
+                        help="ablation: feed Model A's FFT magnitude features "
+                             "to Model B's architecture, isolating what the "
+                             "time-domain representation contributes")
     parser.add_argument("--no-overlap", dest="overlap", action="store_false",
                         help="ablation: train on non-overlapping windows only")
+    parser.add_argument("--context-seconds", type=float, default=0.0,
+                        help="extra signal shown to the model either side of "
+                             "the labelled window (the label is unchanged). "
+                             "Try 8: it is the principled replacement for "
+                             "post-hoc median smoothing")
+    parser.add_argument("--ensemble", type=int, default=1,
+                        help="train N models per fold at different seeds and "
+                             "average them (try 3); N times slower")
     parser.add_argument("--smoothing", type=int, default=3,
-                        help="median filter width in windows (1 disables)")
+                        help="median filter width in windows (1 disables). "
+                             "Measured HARMFUL at 8 s on the real data: eating "
+                             "is punctuated by pauses at that resolution, so "
+                             "the filter erases short genuine bouts. Prefer "
+                             "--context-seconds")
     parser.add_argument("--folds", type=int, default=4)
     parser.add_argument("--seed", type=int, default=9)
     parser.add_argument("--epochs", type=int, default=MAX_EPOCHS)

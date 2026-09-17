@@ -125,9 +125,17 @@ def cross_validate(
         epochs: int = 60,
         batch_size: int = 64,
         patience: int = 10,
+        # Two. It was briefly raised to three to steady a wild threshold (0.67
+        # on one fold), but a held-out participant is ~7% of the training data
+        # here, and both models lost ground when it went up: Model A pooled F1
+        # 0.777 -> 0.765, Model B 0.853 -> 0.828. Threshold stability is now
+        # handled where it belongs - in ets_eval.choose_threshold, which takes
+        # the centre of the plateau rather than the argmax - so it no longer has
+        # to be bought with training data.
         inner_validation_participants: int = 2,
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
+        n_models: int = 1,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -168,8 +176,17 @@ def cross_validate(
         fit_rows = train_rows[~inner_mask]
         validation_rows = train_rows[inner_mask]
 
-        set_seed(seed + index)
-        model = build_model(features.shape[1:])
+        # An ensemble of the SAME architecture at different seeds. With ~5-8
+        # hours of data a single network's decision boundary depends noticeably
+        # on initialisation - the fold-to-fold spread is +-0.05 F1 - and
+        # averaging several runs cancels part of that variance. It adds no
+        # capacity and no new assumption, only stability, which is why it is
+        # defensible on a dataset this size where a bigger model would not be.
+        models = []
+        for member in range(n_models):
+            set_seed(seed + index * 100 + member)
+            models.append(build_model(features.shape[1:]))
+        model = models[0]
 
         y_fit = windows.y[fit_rows].astype(np.float32)
         y_validation = windows.y[validation_rows].astype(np.float32)
@@ -190,33 +207,87 @@ def cross_validate(
             targets_fit, targets_validation = y_fit, y_validation
             fit_kwargs = dict(class_weight=class_weights(windows.y[fit_rows]))
 
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=patience,
-                restore_best_weights=True, verbose=0),
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss", factor=0.5, patience=max(3, patience // 3),
-                min_lr=1e-5, verbose=0),
-        ]
+        def make_callbacks():
+            """Fresh callbacks per ensemble member. Callbacks carry state -
+            EarlyStopping keeps the best weights and the wait counter - so
+            reusing one instance across members would let the first member's
+            history stop the second before it had trained."""
+            return [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_loss", patience=patience,
+                    restore_best_weights=True, verbose=0),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor="val_loss", factor=0.5,
+                    patience=max(3, patience // 3), min_lr=1e-5, verbose=0),
+            ]
 
-        history = model.fit(
-            features[fit_rows], targets_fit,
-            validation_data=(features[validation_rows], targets_validation),
-            epochs=epochs, batch_size=batch_size, callbacks=callbacks,
-            verbose=0, **fit_kwargs)
+        history = None
+        for member, member_model in enumerate(models):
+            member_history = member_model.fit(
+                features[fit_rows], targets_fit,
+                validation_data=(features[validation_rows], targets_validation),
+                epochs=epochs, batch_size=batch_size,
+                callbacks=make_callbacks(), verbose=0, **fit_kwargs)
+            if history is None:
+                history = member_history
 
         def predict(rows: np.ndarray) -> np.ndarray:
-            output = model.predict(features[rows], batch_size=256, verbose=0)
-            if isinstance(output, (list, tuple)):
-                output = output[0]
-            elif isinstance(output, dict):
-                output = output["food"]
-            return np.asarray(output).ravel()
+            """Food-intake probability for these rows.
+
+            Calls the model directly instead of model.predict(). predict()
+            builds a compiled tf.function keyed on the input signature, and
+            each fold feeds it a differently sized array, so TensorFlow retraces
+            and prints a retracing warning several times per run. Calling the
+            model eagerly in fixed-size batches avoids both the warning and the
+            repeated compilation.
+            """
+            if len(rows) == 0:
+                return np.zeros(0, dtype=np.float32)
+            total = np.zeros(len(rows), dtype=np.float64)
+            for member_model in models:
+                chunks = []
+                for start in range(0, len(rows), 256):
+                    batch = features[rows[start:start + 256]]
+                    output = member_model(batch, training=False)
+                    if isinstance(output, dict):
+                        output = output["food"]
+                    elif isinstance(output, (list, tuple)):
+                        output = output[0]
+                    chunks.append(np.asarray(output).ravel())
+                total += np.concatenate(chunks)
+            return total / len(models)
 
         # Threshold from the inner validation participants only.
+        #
+        # ALL their windows, including the overlapping ones. Restricting this to
+        # the non-overlapping grid (to mirror test conditions exactly) halves
+        # the data the threshold is estimated from, and a threshold is a single
+        # scalar: overlapping windows do not bias it, they only weight some
+        # stretches of a meal slightly more. Model B lost more than Model A when
+        # this was restricted, which fits - Model A trains on a hop equal to its
+        # window, so the restriction changed nothing for it.
         validation_probability = predict(validation_rows)
         threshold = ets_eval.choose_threshold(
             windows.y[validation_rows], validation_probability, "f1")
+
+        # Smoothing is different: the median filter walks along consecutive
+        # windows, so its threshold MUST be estimated at the same spacing the
+        # test fold is smoothed at. Selected on the non-overlapping grid.
+        validation_eval_rows = validation_rows[evaluate_on[validation_rows]]
+        smoothed_eval_probability = predict(validation_eval_rows)
+
+        # Smoothing needs its OWN threshold. A median filter pulls each value
+        # toward its neighbours, which shifts the probability distribution;
+        # reusing the unsmoothed threshold measures that mismatch rather than
+        # the effect of smoothing, and made smoothing look harmful (F1 0.777 ->
+        # 0.730 on the first real run) when it had not been given a fair test.
+        smoothed_validation = ets_eval.smooth_predictions(
+            smoothed_eval_probability, windows.starts[validation_eval_rows],
+            windows.participants[validation_eval_rows],
+            windows.window_seconds, windows.window_seconds,
+            kernel=smoothing_kernel)
+        smoothed_threshold = ets_eval.choose_threshold(
+            windows.y[validation_eval_rows], smoothed_validation, "f1")
 
         test_probability = predict(test_rows)
         pooled_probability[test_rows] = test_probability
@@ -228,7 +299,7 @@ def cross_validate(
             windows.participants[test_rows], windows.window_seconds,
             windows.window_seconds, kernel=smoothing_kernel)
         smoothed_metrics = ets_eval.metrics(windows.y[test_rows], smoothed,
-                                            threshold)
+                                            smoothed_threshold)
 
         results.append(FoldResult(
             fold=index + 1, held_out=list(held_out), threshold=threshold,
@@ -239,7 +310,8 @@ def cross_validate(
 
         if verbose:
             epochs_run = len(history.history["loss"])
-            print(f"  fold {index + 1}  held out {', '.join(held_out):<46} "
+            members = f" x{len(models)}" if len(models) > 1 else ""
+            print(f"  fold {index + 1}{members}  held out {', '.join(held_out):<46} "
                   f"n={len(test_rows):>5,}  F1 {fold_metrics['f1']:.3f} "
                   f"(smoothed {smoothed_metrics['f1']:.3f})  "
                   f"acc {fold_metrics['accuracy']:.3f}  thr {threshold:.2f}  "

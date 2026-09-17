@@ -68,12 +68,39 @@ def metrics(y_true: np.ndarray, y_probability: np.ndarray,
 
 
 def choose_threshold(y_true: np.ndarray, y_probability: np.ndarray,
-                     objective: str = "f1") -> float:
-    """Best threshold on the data given - which must never be the test fold."""
-    scores = [(metrics(y_true, y_probability, t)[objective], t)
-              for t in THRESHOLD_GRID]
-    best = max(scores, key=lambda pair: (pair[0], -abs(pair[1] - 0.5)))
-    return float(best[1])
+                     objective: str = "f1", tolerance: float = 0.01) -> float:
+    """Threshold from the data given - which must never be the test fold.
+
+    The CENTRE of the plateau, not the argmax. The objective-versus-threshold
+    curve is nearly flat near its peak, so on a validation set of three
+    participants the exact maximum sits wherever the noise happens to be
+    highest. Measured: taking the argmax gave thresholds of 0.16, 0.17, 0.50 and
+    0.50 across four folds - bimodal, with nothing in between - and the two
+    folds pinned near the floor lost precision badly (0.593 and 0.767) while
+    recall ran to 0.93-0.96.
+
+    F1 makes this worse than it looks, because it ignores true negatives: once
+    precision is cheap, lowering the threshold keeps buying recall at almost no
+    F1 cost, so ties break downward.
+
+    HONESTY ABOUT WHAT THIS BUYS: simulated against the argmax over 400 trials,
+    with validation and test drawn as DIFFERENT participants with their own
+    signal quality and eating fraction (as in the real data), the plateau centre
+    won by +0.0009 F1 and cut the spread by nothing. It is NOT a performance
+    improvement and must not be reported as one. It is kept because a reported
+    threshold that jumps between 0.16 and 0.50 across folds, for no reason a
+    reader can see, invites a question the argmax cannot answer - and the
+    plateau centre gives the same score with a stable number beside it.
+
+    The measured cause of the small drop that prompted this (Model A pooled F1
+    0.777 -> 0.765) is more likely the third inner-validation participant,
+    which removes a participant from the fit set; the difference is well inside
+    the +-0.046 fold-to-fold spread either way.
+    """
+    scores = np.array([metrics(y_true, y_probability, t)[objective]
+                       for t in THRESHOLD_GRID])
+    plateau = THRESHOLD_GRID[scores >= scores.max() - tolerance]
+    return float(np.median(plateau))
 
 
 def smooth_predictions(probability: np.ndarray, starts: np.ndarray,
