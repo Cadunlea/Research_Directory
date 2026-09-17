@@ -44,15 +44,47 @@ Confusion: tp=980 fp=139 fn=195 tn=2189. Per-fold F1 0.920 / 0.801 / 0.807 /
 A and B above are on the same harness and are directly comparable. A -> B is
 +0.075 F1, +0.064 accuracy, and +0.146 precision.
 
-ABLATIONS RUN SO FAR
-- Auxiliary chew head: +0.0056 F1 (0.849 -> 0.854), +0.019 precision, and the
-  gain sits almost entirely in fold 2, the fold holding the weakest optical
-  signal (AIM109345, drift r=0.41). Direction matches the motivation; the
-  magnitude is INSIDE the +-0.048 fold spread, so it must be reported as
-  "consistent with, but not separable from, variance at n=20" and never as a
-  demonstrated improvement.
+## ABLATION TABLE - what actually caused the improvement
+
+Every row is Model B with ONE component removed, same harness, same folds.
+
+| Variant | F1 | delta | Precision |
+|---|---|---|---|
+| **Model B, full** | **0.854** | - | 0.876 |
+| - time-domain input (FFT instead) | 0.767 | **-0.087** | 0.696 |
+| - overlap augmentation | 0.829 | -0.025 | 0.834 |
+| - attention | 0.847 | -0.007 | 0.857 |
+| - auxiliary chew head | 0.849 | -0.006 | 0.857 |
+| *Model A, for reference* | 0.779 | | 0.730 |
+
+THE HEADLINE FINDING: the representation is doing nearly all the work.
+Replacing the FFT magnitude spectrum with the band-passed time series accounts
+for F1 +0.087 and precision +0.180.
+
+And the sharpest evidence for it: Model B's ARCHITECTURE fed Model A's FFT
+features scores 0.767 - WORSE than Model A's simpler architecture on the same
+features (0.779). The attention, the pooling and the auxiliary head are worth
+nothing, slightly less than nothing, over a magnitude spectrum. They only pay
+off once the input has temporal structure to attend to, which is exactly what
+you would predict: attention pooling over frequency bins is meaningless,
+attention pooling over time is not.
+
+What is statistically supportable at a fold spread of +-0.047:
+- time-domain input, -0.087: REAL. Nearly twice the spread, with a large
+  coherent secondary signal in precision. Assert it.
+- overlap augmentation, -0.025: suggestive, about half the spread. Report the
+  number, do not lean on it.
+- attention -0.007 and chew head -0.006: INSIDE noise. Report as measured and
+  state they are not separable from variance at n=20. Never claim either as a
+  contribution.
+
+The marginals do NOT sum to the A -> B total of +0.075, and should not be made
+to: ablations measure marginal contributions and these interact, which is the
+whole point of the FFT row.
+
+OTHER ABLATION
 - 8 s context WITHOUT a target marker: -0.080 F1. See the negative results
-  section - this one has a diagnosis and a fix worth testing.
+  section - diagnosed, with a fix that is implemented but still untested.
 
 Protocol history, since the numbers moved twice and a reader may ask:
 3 inner participants + threshold restricted to non-overlapping validation
