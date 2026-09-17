@@ -7,7 +7,7 @@ Research materials for Eating Trajectory study stored here
 
 ### Most recent:
 
-**16 September 2026 | 6:40 pm - 12:20 am**
+**16 September 2026 | 5:26 pm - 8:01 pm**
 **Primary objective:** Verify Tuesday's results, decompose where the improvement actually came from, and record everything for reproducibility
 
 Tuesday's numbers looked good enough that I wanted to be sure they weren't an artifact of how I was measuring before I showed anyone. That turned out to be the right instinct. Re-running with a corrected evaluation harness moved the numbers around twice, and both times the cause was something in the protocol rather than the model. Threshold selection was the culprit: it was being chosen on unsmoothed predictions and then applied to smoothed ones, and at one point I was spending a whole training participant to stabilize a number that belonged in the estimator instead. Once those were sorted out, Model B settled at F1 0.854 / accuracy 0.905, essentially where it started, but now on a protocol I can defend line by line.
