@@ -6,8 +6,8 @@ WHAT IT IS FOR
 check_annotation_drift.py produces the numbers. This produces the picture to
 put on a slide, because the argument is visual: the correlation curve has the
 SAME SHAPE under both readings of data_timestamp and is merely displaced by one
-8 s packet. That is what distinguishes a units bug from real clock drift, and
-it is far more convincing seen than described.
+8 s packet. That is what distinguishes a timestamp reading from real clock
+drift, and it is far more convincing seen than described.
 
     Panel A   correlation against candidate lag, every session, both
               conventions. Two bundles of curves, identical in shape, 8 s
@@ -192,7 +192,7 @@ def panel_lags(axis, results: List[dict]) -> None:
 
     axis.axvline(0, color=INK_MUTED, linewidth=1.0, linestyle="--", zorder=0)
     axis.axvline(-8.0, color=INK_MUTED, linewidth=1.0, linestyle=":", zorder=0)
-    axis.annotate("the shift the previous\nmodel hardcoded", xy=(-8.0, -0.42),
+    axis.annotate("previous -8 s\ncorrection", xy=(-8.0, -0.42),
                   ha="center", va="top", color=INK_SECONDARY, fontsize=8)
     axis.set_yticks([0, 1])
     axis.set_yticklabels(["packet\nstart", "packet\nend"], fontsize=9)

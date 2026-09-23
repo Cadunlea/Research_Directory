@@ -4,11 +4,13 @@ straight from the database.
 
 WHAT THIS ANSWERS
 -----------------
-The previous model hardcoded ANNOTATION_TIME_SHIFT_SECONDS = -8.0, because
-false-positive inspection suggested food-like sensor activity showed up about
-8-10 seconds BEFORE the annotation said eating had started. That was a patch
-applied to a symptom: nobody measured the lag, so nobody knew its true size,
-whether it varied between participants, or whether it was ever really there.
+The previous model applied ANNOTATION_TIME_SHIFT_SECONDS = -8.0. Inspection of
+its false positives on the old CSV-based pipeline showed food-like sensor
+activity arriving about 8-10 seconds BEFORE the annotation said eating had
+started, and the correction compensated for that. The lab has since rebuilt the
+database, so before training on the new data the lag has to be measured again:
+its size, whether it varies between participants, and whether any correction is
+still needed.
 
 This script measures it. For each session it cross-correlates a chewing-activity
 signal derived from the optical sensor against the annotated eating mask, over a
@@ -22,26 +24,22 @@ ANNOTATION_TIME_SHIFT_SECONDS = -8.0.
 
 Read the result like this:
     lag ~ 0 s across sessions      the data are aligned; no correction is needed
-                                   and the old -8 s shift was an artefact
-    lag ~ -8 s across sessions     the old finding is real and still present
+    lag ~ -8 s across sessions     the earlier offset is still present
     the same non-zero lag for all  a systematic convention error, fixable once
     lags scattered per session     per-session clock drift, a real data problem
 
-A LIKELY CAUSE, WHICH THIS SCRIPT TESTS DIRECTLY
-------------------------------------------------
-The repository disagrees with itself about what data_timestamp means:
+WHY BOTH TIMESTAMP READINGS ARE MEASURED
+----------------------------------------
+data_timestamp can be read two ways: as the moment a sensor packet STARTS, or
+the moment it ENDS. A packet is 8 seconds long, so the two readings place every
+sensor sample exactly one packet apart. The measured lag therefore depends on
+which reading is used, and the script cannot assume one without biasing the
+answer.
 
-  plot_raw_data.py       data_index = (timestamp - day_start) * 128
-                         -> data_timestamp is the packet's START
-
-  the old training code  packet_start = data_timestamp - data_duration
-                         -> data_timestamp is the packet's END
-
-A packet is 8 seconds long. Choosing the wrong convention displaces every
-sensor sample by exactly one packet - 8 seconds - which is precisely the size of
-the shift that was hardcoded. So this script evaluates BOTH conventions and
-reports the lag under each. If 'start' yields ~0 s and 'end' yields ~8 s, the
-drift was never in the data at all: it was a units bug, and it is now gone.
+It evaluates BOTH and reports the lag under each. The reading that yields ~0 s
+with a strong correlation is the one the data support, and a constant 8 s
+difference between the two readings confirms the measurement is behaving as
+expected rather than reflecting drift in the recordings.
 
 USAGE
 -----
@@ -265,10 +263,10 @@ def load_optical(conn, participant: str, start_ts: float, end_ts: float,
     """Optical channel at 128 Hz over [start_ts, end_ts), -1 where no sample.
 
     `convention` decides what data_timestamp means:
-        'start'  the packet BEGINS at data_timestamp   (plot_raw_data.py)
-        'end'    the packet ENDS at data_timestamp     (the old training code)
-    The two differ by one packet length - 8 seconds - which is exactly the size
-    of the shift the old model hardcoded, so both are measured.
+        'start'  the packet BEGINS at data_timestamp   (as plot_raw_data.py reads it)
+        'end'    the packet ENDS at data_timestamp
+    The two differ by one packet length - 8 seconds - so both are measured
+    rather than one being assumed.
     """
     total = int(round((end_ts - start_ts) * SENSOR_FS))
     optical = np.full(total, float(MISSING), dtype=np.float64)
@@ -385,9 +383,9 @@ def lagged_correlation(activity: np.ndarray, activity_valid: np.ndarray,
         annotation claims - equivalently, the number of seconds that would have
         to be ADDED to the annotation timestamps to line them up.
 
-    So it is directly comparable to the old ANNOTATION_TIME_SHIFT_SECONDS:
-    a reported -8 s here reproduces exactly the finding that hardcoded -8.0,
-    namely sensor activity arriving 8 s BEFORE the annotation said eating.
+    So it is directly comparable to the earlier ANNOTATION_TIME_SHIFT_SECONDS:
+    a reported -8 s here means sensor activity arriving 8 s BEFORE the
+    annotation said eating, the same size and sign as that correction.
     A reported 0 means no correction is warranted.
 
     Correlation is computed only over samples valid in both series at that lag,
@@ -523,7 +521,7 @@ def plot_session(result: dict, output_dir: Path) -> None:
     plt.axvline(result["best_lag_seconds"], color="#c0392b", linewidth=1.4,
                 label=f"best lag {result['best_lag_seconds']:+.1f}s")
     plt.axvline(-8.0, color="#e67e22", linestyle=":", linewidth=1.2,
-                label="old hardcoded -8s")
+                label="previous -8 s correction")
     plt.xlabel("lag (s)   positive = sensor activity occurs LATER than annotated")
     plt.ylabel("correlation with annotated eating")
     plt.title(f"{result['participant']}  {result['study']}  "
@@ -559,7 +557,7 @@ def plot_summary(results: List[dict], output_dir: Path) -> None:
         axis.set_ylabel("sessions")
         axis.grid(True, linestyle="--", alpha=0.4)
     figure.suptitle("Sensor / annotation lag, measured per session\n"
-                    "dashed = zero lag, dotted = the old hardcoded -8 s",
+                    "dashed = zero lag, dotted = the previous -8 s correction",
                     fontsize=11)
     figure.tight_layout()
     figure.savefig(output_dir / "drift_summary.png", dpi=150)
@@ -609,8 +607,8 @@ def verdict(results: List[dict]) -> None:
     print(f"\n  Closest to aligned: the '{best}' convention, median "
           f"{median_best:+.2f} s.")
     if abs(median_best) <= 1.0:
-        print("  -> The data are aligned. No shift is needed, and the old -8 s")
-        print("     correction should NOT be carried forward.")
+        print("  -> The data are aligned. No shift is needed on this database,")
+        print("     so the previous -8 s correction is not carried forward.")
     elif abs(abs(median_best) - 8.0) <= 2.0:
         print("  -> The residual lag is about one 8 s packet, which points at the")
         print("     packet timestamp convention rather than at clock drift.")

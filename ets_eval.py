@@ -267,7 +267,7 @@ def metrics_from_counts(counts: Dict[str, float]) -> Dict[str, float]:
 
 # The numbers to beat, quoted so every report states them rather than relying
 # on anyone remembering. The previous model's figures come from a SINGLE
-# 2-participant test split of 249 windows, WITH the phantom -8 s shift applied;
+# 2-participant test split of 249 windows, WITH the earlier -8 s correction applied;
 # they are a target, not a like-for-like comparison, and should be described
 # that way.
 BASELINE = {
@@ -316,7 +316,7 @@ def report(title: str, fold_metrics: Sequence[Dict[str, float]],
     print(f"    {'F1 vs RF paper':<20}{summary['pooled_f1']:.4f}  vs "
           f"{RANDOM_FOREST_F1:.4f} ({delta_rf:+.4f})")
     print(f"\n  NOTE: the previous figures come from one 2-participant split of "
-          f"249\n  windows with the phantom -8 s shift applied. These are "
+          f"249\n  windows with the earlier -8 s correction applied. These are "
           f"cross-validated\n  over every participant, which is a harder and "
           f"more honest test.")
 

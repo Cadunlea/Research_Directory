@@ -28,19 +28,19 @@ between the two tables - the ground-truth upload gives each of CHGT/BOGT/BIGT a
 different hash, so the documented tuple_hash((studyID, participantID)) does not
 hold there.
 
-THE 8 SECOND SHIFT IS NOT APPLIED, BECAUSE IT DOES NOT EXIST
-------------------------------------------------------------
-The previous model hardcoded ANNOTATION_TIME_SHIFT_SECONDS = -8.0.
+NO TIME SHIFT IS APPLIED, BECAUSE THIS DATABASE NEEDS NONE
+----------------------------------------------------------
+The previous model, on the old CSV pipeline, applied
+ANNOTATION_TIME_SHIFT_SECONDS = -8.0.
 check_annotation_drift.py measured the true lag on all 20 sessions:
 
     data_timestamp read as packet START : median +0.10 s, all 20 within +-0.2 s
     data_timestamp read as packet END   : median -7.90 s, all 20 near -8 s
 
 with the SAME peak correlation either way (0.716 vs 0.715). A genuine drift
-would degrade the correlation; a units error displaces it while preserving its
-shape. The -8 s was the old code computing packet_start = data_timestamp -
-data_duration, i.e. reading a start timestamp as an end timestamp. This module
-treats data_timestamp as the packet start and applies NO shift.
+would degrade the correlation; a timestamp reading displaces it while
+preserving its shape. This module treats data_timestamp as the packet start and
+applies NO shift.
 
 MISSING DATA
 ------------
@@ -242,8 +242,8 @@ def load_sensor(conn, session: Session, start_ts: float, end_ts: float
     sample was received.
 
     data_timestamp is the packet START. This is measured, not assumed - see the
-    module docstring. Reading it as an end timestamp is what produced the
-    phantom 8 second shift in the previous model.
+    module docstring. Reading it as an end timestamp would displace every
+    sample by one 8 s packet.
     """
     total = int(round((end_ts - start_ts) * SENSOR_FS))
     block = np.full((total, 4), float(MISSING), dtype=np.float32)

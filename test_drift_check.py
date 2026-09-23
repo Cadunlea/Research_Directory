@@ -11,8 +11,8 @@ inject offsets whose true value is known and confirm the script recovers them.
 They already caught one real bug: downsampling 128 Hz to 10 Hz by averaging
 blocks of round(12.8) = 13 samples produced a 9.846 Hz series that the rest of
 the code treated as 10 Hz. That error grows with elapsed time and reaches about
-8 SECONDS by the middle of a 17 minute session - it would have manufactured
-exactly the drift the script was written to measure.
+8 SECONDS by the middle of a 17 minute session - it would have produced
+exactly the kind of offset the script was written to measure.
 
     python -m pytest test_drift_check.py -v
     python test_drift_check.py              (runs without pytest too)
@@ -119,26 +119,29 @@ def test_recovers_known_offsets_in_both_directions():
             f"injected {offset}, reported {result['best_lag_seconds']}")
 
 
-def test_sign_convention_matches_the_old_hardcoded_shift():
+def test_sign_convention_matches_the_previous_correction():
     """Sensor activity arriving 8 s EARLY must report -8, the same number and
-    sign as the old ANNOTATION_TIME_SHIFT_SECONDS = -8.0."""
+    sign as the earlier ANNOTATION_TIME_SHIFT_SECONDS = -8.0, so the two can be
+    compared directly."""
     result = measure(None, -8.0, "start", "start")
     assert result["best_lag_seconds"] < 0
     assert abs(result["best_lag_seconds"] + 8.0) <= TOLERANCE_S
 
 
 def test_packet_timestamp_convention_shifts_by_exactly_one_packet():
-    """Reading correctly stored packets with the wrong convention must displace
-    the result by one 8 s packet - the mechanism this script exists to expose."""
+    """Reading the same packets under the other timestamp convention must
+    displace the result by exactly one 8 s packet. This is why the drift check
+    measures both readings instead of assuming one."""
     correct = measure(None, 0.0, "start", "start")["best_lag_seconds"]
     wrong = measure(None, 0.0, "start", "end")["best_lag_seconds"]
     assert abs(correct) <= TOLERANCE_S
     assert abs((wrong - correct) + 8.0) <= TOLERANCE_S
 
 
-def test_wrong_convention_can_masquerade_as_the_eight_second_drift():
-    """Data stored END-stamped but read as START-stamped looks like a -8 s
-    drift that is not in the data at all."""
+def test_timestamp_reading_alone_can_produce_an_eight_second_offset():
+    """Aligned data read under the other timestamp convention shows an 8 s
+    offset that is not in the recordings. The check must report both readings
+    so the two cases can be told apart."""
     misread = measure(None, 0.0, "end", "start")["best_lag_seconds"]
     correct = measure(None, 0.0, "end", "end")["best_lag_seconds"]
     assert abs(correct) <= TOLERANCE_S
