@@ -20,13 +20,29 @@ THE PROTOCOL
 
 Steps 2 and 4 are what make the resulting number an estimate of performance on
 a participant the model has never seen.
+
+LEAVE-ONE-SUBJECT-OUT
+---------------------
+`loso=True` makes every participant its own fold. Nothing about the protocol
+changes; what changes is that each model trains on ~19 participants instead of
+~15, and the output is one score per participant, which is what a paired test
+between two models needs (see compare_runs.py). With 4 folds there are only 4
+numbers to compare, which is why the attention and chew-head ablations could
+not be separated from noise.
+
+Under LOSO the inner validation participants should ROTATE (see
+choose_inner_participants): taking the first two in sorted order would hand the
+same two people the early-stopping and threshold decision in 18 of 20 folds.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+import time
 
 import numpy as np
 
@@ -88,6 +104,30 @@ def aligned_mask(windows: ets_data.WindowSet) -> np.ndarray:
     return mask
 
 
+def choose_inner_participants(train_participants: Sequence[str], count: int,
+                              fold_index: int, seed: int,
+                              mode: str = "first") -> np.ndarray:
+    """Which training participants are held back for early stopping and the
+    threshold.
+
+    "first"  - the first `count` in sorted order. The original behaviour, kept
+               so earlier 4-fold numbers reproduce exactly.
+    "rotate" - ordered by a hash of (seed, fold, participant), so the choice
+               changes from fold to fold but is identical on every run. Under
+               LOSO "first" would give the same two people this job in almost
+               every fold, and any quirk of theirs would be baked into all 20
+               thresholds.
+    """
+    ordered = np.sort(np.asarray(train_participants))
+    if mode == "first":
+        return ordered[:count]
+    if mode == "rotate":
+        keyed = sorted(ordered, key=lambda p: hashlib.md5(
+            f"{seed}:{fold_index}:{p}".encode()).hexdigest())
+        return np.asarray(keyed[:count])
+    raise ValueError(f"unknown inner selection mode: {mode!r}")
+
+
 @dataclass
 class FoldResult:
     fold: int
@@ -98,6 +138,11 @@ class FoldResult:
     probabilities: np.ndarray
     indices: np.ndarray
     history: Dict[str, List[float]] = field(default_factory=dict)
+    inner_participants: List[str] = field(default_factory=list)
+    # Metrics for each held-out participant at this fold's threshold. Under
+    # LOSO there is one entry and it equals `metrics`.
+    participant_metrics: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    seconds: float = 0.0
 
 
 def class_weights(y: np.ndarray) -> Dict[int, float]:
@@ -136,6 +181,8 @@ def cross_validate(
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
         n_models: int = 1,
+        loso: bool = False,
+        inner_selection: str = "first",
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -147,6 +194,8 @@ def cross_validate(
 
     features = transform(windows.X)
     evaluate_on = aligned_mask(windows)
+    if loso:
+        n_folds = len(np.unique(windows.participants))
     folds = ets_data.participant_folds(windows.participants, n_folds, seed)
 
     if verbose:
@@ -154,16 +203,20 @@ def cross_validate(
         print(f"input shape: {features.shape[1:]}")
         print(f"evaluating on {int(evaluate_on.sum()):,} non-overlapping "
               f"windows of {len(windows):,} total")
-
-    # The auxiliary target is chews per window, scaled to a comparable range so
-    # its loss does not dominate the classification loss purely by magnitude.
-    chew_scale = float(np.percentile(windows.chews, 99)) or 1.0
-    chew_target = (windows.chews / chew_scale).astype(np.float32)
+        sessions = len(set(zip(windows.participants, windows.studies)))
+        people = len(np.unique(windows.participants))
+        scheme = "leave-one-subject-out" if loso else f"{n_folds}-fold"
+        print(f"{people} participants, {sessions} sessions -> {scheme} "
+              f"cross-validation, inner validation '{inner_selection}'")
+        if sessions != people:
+            print("  note: some participants have more than one session; each "
+                  "participant is held out as a whole, never one session")
 
     results: List[FoldResult] = []
     pooled_probability = np.full(len(windows), np.nan, dtype=np.float64)
 
     for index, held_out in enumerate(folds):
+        fold_started = time.time()
         train_rows, test_rows = ets_data.fold_indices(windows, held_out)
         test_rows = test_rows[evaluate_on[test_rows]]
 
@@ -171,10 +224,21 @@ def cross_validate(
         # the threshold. Taking a random slice of windows instead would leak -
         # the neighbouring window of the same meal is nearly the same window.
         train_participants = np.unique(windows.participants[train_rows])
-        inner_held = train_participants[:inner_validation_participants]
+        inner_held = choose_inner_participants(
+            train_participants, inner_validation_participants, index, seed,
+            inner_selection)
         inner_mask = np.isin(windows.participants[train_rows], inner_held)
         fit_rows = train_rows[~inner_mask]
         validation_rows = train_rows[inner_mask]
+
+        # The auxiliary target is chews per window, scaled to a comparable
+        # range so its loss does not dominate the classification loss purely by
+        # magnitude. The scale comes from the FIT participants only: taking it
+        # over every window, as before, let the held-out participant's chew
+        # counts shape the training target. Negligible in size, but it is a
+        # label statistic crossing the split and has no defence.
+        chew_scale = float(np.percentile(windows.chews[fit_rows], 99)) or 1.0
+        chew_target = (windows.chews / chew_scale).astype(np.float32)
 
         # An ensemble of the SAME architecture at different seeds. With ~5-8
         # hours of data a single network's decision boundary depends noticeably
@@ -301,12 +365,20 @@ def cross_validate(
         smoothed_metrics = ets_eval.metrics(windows.y[test_rows], smoothed,
                                             smoothed_threshold)
 
+        participant_metrics = ets_eval.per_participant(
+            windows.y[test_rows], test_probability,
+            windows.participants[test_rows], threshold)
+
         results.append(FoldResult(
-            fold=index + 1, held_out=list(held_out), threshold=threshold,
+            fold=index + 1, held_out=[str(p) for p in held_out],
+            threshold=threshold,
             metrics=fold_metrics, smoothed_metrics=smoothed_metrics,
             probabilities=test_probability, indices=test_rows,
             history={k: [float(v) for v in vals]
-                     for k, vals in history.history.items()}))
+                     for k, vals in history.history.items()},
+            inner_participants=[str(p) for p in inner_held],
+            participant_metrics=participant_metrics,
+            seconds=time.time() - fold_started))
 
         if verbose:
             epochs_run = len(history.history["loss"])
@@ -315,6 +387,56 @@ def cross_validate(
                   f"n={len(test_rows):>5,}  F1 {fold_metrics['f1']:.3f} "
                   f"(smoothed {smoothed_metrics['f1']:.3f})  "
                   f"acc {fold_metrics['accuracy']:.3f}  thr {threshold:.2f}  "
-                  f"{epochs_run} epochs")
+                  f"{epochs_run} epochs  {time.time() - fold_started:.0f}s")
 
     return results, pooled_probability
+
+
+# --------------------------------------------------------------------------- #
+# shared command-line plumbing for the training scripts
+# --------------------------------------------------------------------------- #
+def add_cv_arguments(parser) -> None:
+    parser.add_argument("--folds", type=int, default=4)
+    parser.add_argument("--loso", action="store_true",
+                        help="leave-one-subject-out: every participant is its "
+                             "own fold (overrides --folds). Gives one score "
+                             "per participant for paired comparison with "
+                             "compare_runs.py")
+    parser.add_argument("--inner-selection", choices=("first", "rotate"),
+                        default=None,
+                        help="how the inner validation participants are "
+                             "picked. Default: 'rotate' with --loso, 'first' "
+                             "otherwise (reproduces the earlier 4-fold runs)")
+
+
+def resolve_inner_selection(args) -> str:
+    if args.inner_selection:
+        return args.inner_selection
+    return "rotate" if args.loso else "first"
+
+
+def cv_tag(args) -> str:
+    """Filename fragment naming the CV scheme, so a LOSO run never overwrites
+    a 4-fold one."""
+    scheme = "loso" if args.loso else f"{args.folds}fold"
+    inner = resolve_inner_selection(args)
+    default_inner = "rotate" if args.loso else "first"
+    return scheme if inner == default_inner else f"{scheme}_inner-{inner}"
+
+
+def fold_records(results: Sequence[FoldResult]) -> List[Dict]:
+    return [{"fold": r.fold, "held_out": r.held_out,
+             "inner_participants": r.inner_participants,
+             "threshold": r.threshold, "metrics": r.metrics,
+             "smoothed_metrics": r.smoothed_metrics,
+             "seconds": round(r.seconds, 1)} for r in results]
+
+
+def participant_records(results: Sequence[FoldResult]) -> Dict[str, Dict]:
+    """Every held-out participant's metrics, keyed by participant ID. This is
+    what compare_runs.py reads."""
+    out: Dict[str, Dict] = {}
+    for r in results:
+        for participant, values in r.participant_metrics.items():
+            out[participant] = dict(values, fold=r.fold)
+    return out

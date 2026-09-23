@@ -101,7 +101,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ets_data.add_database_arguments(parser)
     parser.add_argument("--window-seconds", type=float, default=8.0)
-    parser.add_argument("--folds", type=int, default=4)
+    ets_train.add_cv_arguments(parser)
     parser.add_argument("--seed", type=int, default=9)
     parser.add_argument("--epochs", type=int, default=MAX_EPOCHS)
     parser.add_argument("--rebuild-cache", action="store_true")
@@ -121,11 +121,13 @@ def main() -> int:
     results, pooled = ets_train.cross_validate(
         windows, ets_data.fft_features, build_model,
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
-        batch_size=BATCH_SIZE, patience=PATIENCE, verbose=True)
+        batch_size=BATCH_SIZE, patience=PATIENCE, loso=args.loso,
+        inner_selection=ets_train.resolve_inner_selection(args), verbose=True)
 
+    scheme = ("leave-one-subject-out" if args.loso
+              else f"{args.folds}-fold participant CV")
     summary = ets_eval.report(
-        f"MODEL A  FFT + CNN  ({args.window_seconds:g}s windows, "
-        f"{args.folds}-fold participant CV)",
+        f"MODEL A  FFT + CNN  ({args.window_seconds:g}s windows, {scheme})",
         [r.metrics for r in results])
 
     smoothed = ets_eval.report(
@@ -135,15 +137,17 @@ def main() -> int:
     payload = {
         "model": "v1_fft_cnn_keras",
         "window_seconds": args.window_seconds,
-        "folds": [{"fold": r.fold, "held_out": r.held_out,
-                   "threshold": r.threshold, "metrics": r.metrics,
-                   "smoothed_metrics": r.smoothed_metrics} for r in results],
+        "cv": ets_train.cv_tag(args),
+        "inner_selection": ets_train.resolve_inner_selection(args),
+        "folds": ets_train.fold_records(results),
+        "participants": ets_train.participant_records(results),
         "summary": summary,
         "summary_smoothed": smoothed,
         "windows": windows.summary(),
         "annotation_shift_seconds": 0.0,
     }
-    path = output_dir / f"model_v1_metrics_w{args.window_seconds:g}.json"
+    path = (output_dir / f"model_v1_metrics_w{args.window_seconds:g}"
+                          f"_{ets_train.cv_tag(args)}.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     print(f"\nwrote {path}")

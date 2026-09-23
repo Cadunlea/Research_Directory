@@ -142,6 +142,87 @@ def smooth_predictions(probability: np.ndarray, starts: np.ndarray,
     return smoothed
 
 
+def per_participant(y_true: np.ndarray, y_probability: np.ndarray,
+                    participants: np.ndarray, threshold: float
+                    ) -> Dict[str, Dict[str, float]]:
+    """Metrics for each participant separately, at one threshold.
+
+    Kept alongside the fold metrics so two runs can be compared participant by
+    participant, whatever fold scheme produced them. The counts are stored too,
+    because a pooled F1 over any subset of participants has to be rebuilt from
+    counts, not averaged from F1s.
+    """
+    out: Dict[str, Dict[str, float]] = {}
+    for participant in np.unique(participants):
+        rows = participants == participant
+        out[str(participant)] = metrics(y_true[rows], y_probability[rows],
+                                        threshold)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# comparing two runs
+# --------------------------------------------------------------------------- #
+def pooled_f1(counts: Sequence[Dict[str, float]]) -> float:
+    total = {k: sum(c[k] for c in counts) for k in ("tp", "tn", "fp", "fn")}
+    return metrics_from_counts(total)["f1"]
+
+
+def paired_comparison(a: Dict[str, Dict[str, float]],
+                      b: Dict[str, Dict[str, float]],
+                      key: str = "f1", n_boot: int = 10000,
+                      seed: int = 0) -> Dict[str, float]:
+    """Compare run B against run A on the participants both scored.
+
+    Two complementary answers:
+
+    1. Wilcoxon signed-rank test on the per-participant differences in `key`.
+       Paired, because the same participant is hard or easy for both models,
+       and that shared difficulty is most of the variance. No normality
+       assumption, which matters at n=20.
+    2. A bootstrap over PARTICIPANTS of the difference in pooled F1, the
+       headline number. Resampling windows instead would treat 8 s slices of
+       one meal as independent evidence and give an interval far too narrow.
+
+    Both are reported because they can disagree: the Wilcoxon weights every
+    participant equally, the pooled F1 weights them by how many windows they
+    contributed.
+    """
+    from scipy.stats import wilcoxon
+
+    shared = sorted(set(a) & set(b))
+    if len(shared) < 2:
+        raise ValueError("fewer than two participants in common")
+    diff = np.array([b[p][key] - a[p][key] for p in shared])
+
+    nonzero = diff[np.abs(diff) > 1e-12]
+    p_value = (float(wilcoxon(nonzero).pvalue) if len(nonzero) >= 1
+               else 1.0)
+
+    rng = np.random.default_rng(seed)
+    idx = np.arange(len(shared))
+    boot = np.empty(n_boot)
+    for i in range(n_boot):
+        pick = rng.choice(idx, size=len(idx), replace=True)
+        boot[i] = (pooled_f1([b[shared[j]] for j in pick]) -
+                   pooled_f1([a[shared[j]] for j in pick]))
+
+    return {
+        "n_participants": len(shared),
+        f"mean_{key}_difference": float(diff.mean()),
+        f"median_{key}_difference": float(np.median(diff)),
+        "improved": int(np.sum(diff > 1e-12)),
+        "worse": int(np.sum(diff < -1e-12)),
+        "wilcoxon_p": p_value,
+        "pooled_f1_a": pooled_f1([a[p] for p in shared]),
+        "pooled_f1_b": pooled_f1([b[p] for p in shared]),
+        "pooled_f1_difference": (pooled_f1([b[p] for p in shared]) -
+                                 pooled_f1([a[p] for p in shared])),
+        "pooled_f1_difference_ci_low": float(np.percentile(boot, 2.5)),
+        "pooled_f1_difference_ci_high": float(np.percentile(boot, 97.5)),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # reporting
 # --------------------------------------------------------------------------- #

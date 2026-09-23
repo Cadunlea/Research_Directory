@@ -280,7 +280,9 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
                                   attention=not args.no_attention),
         n_folds=args.folds, seed=args.seed, epochs=args.epochs,
         batch_size=BATCH_SIZE, patience=PATIENCE, auxiliary=auxiliary,
-        smoothing_kernel=args.smoothing, n_models=args.ensemble, verbose=True)
+        smoothing_kernel=args.smoothing, n_models=args.ensemble,
+        loso=args.loso,
+        inner_selection=ets_train.resolve_inner_selection(args), verbose=True)
 
     extras = ""
     if args.fft_input:
@@ -293,7 +295,8 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
         extras += f" + {args.ensemble}-model ensemble"
     label = (f"MODEL B  time-domain CNN + attention"
              f"{' + auxiliary chew head' if auxiliary else ' (no auxiliary head)'}"
-             f"{extras}  ({window_seconds:g}s windows)")
+             f"{extras}  ({window_seconds:g}s windows, "
+             f"{'LOSO' if args.loso else f'{args.folds}-fold'})")
     summary = ets_eval.report(label, [r.metrics for r in results])
     smoothed = ets_eval.report(f"{label}  + temporal smoothing",
                                [r.smoothed_metrics for r in results])
@@ -307,9 +310,10 @@ def run(args, window_seconds: float, auxiliary: bool) -> Dict:
         "attention": not args.no_attention,
         "fft_input": args.fft_input,
         "windows": windows.summary(),
-        "folds": [{"fold": r.fold, "held_out": r.held_out,
-                   "threshold": r.threshold, "metrics": r.metrics,
-                   "smoothed_metrics": r.smoothed_metrics} for r in results],
+        "cv": ets_train.cv_tag(args),
+        "inner_selection": ets_train.resolve_inner_selection(args),
+        "folds": ets_train.fold_records(results),
+        "participants": ets_train.participant_records(results),
         "summary": summary,
         "summary_smoothed": smoothed,
     }
@@ -346,7 +350,7 @@ def main() -> int:
                              "is punctuated by pauses at that resolution, so "
                              "the filter erases short genuine bouts. Prefer "
                              "--context-seconds")
-    parser.add_argument("--folds", type=int, default=4)
+    ets_train.add_cv_arguments(parser)
     parser.add_argument("--seed", type=int, default=9)
     parser.add_argument("--epochs", type=int, default=MAX_EPOCHS)
     parser.add_argument("--rebuild-cache", action="store_true")
@@ -385,8 +389,26 @@ def main() -> int:
 
     payload = {"model": "v2_time_domain_attention", "runs": runs,
                "annotation_shift_seconds": 0.0}
-    name = ("model_v2_sweep.json" if args.sweep_windows
-            else f"model_v2_metrics_w{args.window_seconds:g}.json")
+    # The name carries the CV scheme and every ablation flag, so runs meant to
+    # be compared with compare_runs.py never overwrite one another.
+    flags = [ets_train.cv_tag(args)]
+    if args.no_auxiliary:
+        flags.append("noaux")
+    if args.no_attention:
+        flags.append("noattn")
+    if args.fft_input:
+        flags.append("fft")
+    if not args.overlap:
+        flags.append("nooverlap")
+    if args.context_seconds:
+        flags.append(f"ctx{args.context_seconds:g}")
+    if args.ensemble > 1:
+        flags.append(f"ens{args.ensemble}")
+    if args.seed != 9:
+        flags.append(f"seed{args.seed}")
+    suffix = "_".join(flags)
+    name = (f"model_v2_sweep_{suffix}.json" if args.sweep_windows
+            else f"model_v2_metrics_w{args.window_seconds:g}_{suffix}.json")
     path = output_dir / name
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)

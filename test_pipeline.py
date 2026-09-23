@@ -305,6 +305,92 @@ def test_threshold_is_chosen_to_maximise_the_objective():
     assert ets_eval.metrics(y_true, probability, threshold)["f1"] == 1.0
 
 
+# --------------------------------------------------------------------------- #
+# leave-one-subject-out and paired comparison
+# --------------------------------------------------------------------------- #
+def test_loso_folds_hold_out_exactly_one_participant_each():
+    participants = np.array(PARTICIPANTS)
+    folds = ets_data.participant_folds(participants, len(PARTICIPANTS), seed=9)
+    assert all(len(fold) == 1 for fold in folds)
+    assert sorted(p for fold in folds for p in fold) == sorted(PARTICIPANTS)
+
+
+def test_inner_participants_never_include_the_test_participant():
+    import ets_train
+    for index, held_out in enumerate(
+            ets_data.participant_folds(np.array(PARTICIPANTS), 8, seed=9)):
+        train = [p for p in PARTICIPANTS if p not in held_out]
+        for mode in ("first", "rotate"):
+            inner = ets_train.choose_inner_participants(train, 2, index, 9, mode)
+            assert len(inner) == 2
+            assert not set(inner) & set(held_out), f"{mode} leaked the test fold"
+            assert set(inner) <= set(train)
+
+
+def test_first_selection_reproduces_the_original_behaviour():
+    """Earlier 4-fold numbers came from np.unique(train)[:2]. 'first' must give
+    exactly that, or those results stop being reproducible."""
+    import ets_train
+    train = np.array(PARTICIPANTS[::-1])
+    got = ets_train.choose_inner_participants(train, 2, 0, 9, "first")
+    assert list(got) == list(np.unique(train)[:2])
+
+
+def test_rotating_selection_is_deterministic_and_actually_rotates():
+    """Under LOSO, 'first' would give the same two people the threshold decision
+    in nearly every fold. 'rotate' must spread that job around, and give the
+    same answer on every run."""
+    import ets_train
+    chosen = []
+    for index in range(len(PARTICIPANTS)):
+        train = [p for i, p in enumerate(PARTICIPANTS) if i != index]
+        a = ets_train.choose_inner_participants(train, 2, index, 9, "rotate")
+        b = ets_train.choose_inner_participants(train, 2, index, 9, "rotate")
+        assert list(a) == list(b), "rotation is not deterministic"
+        chosen.append(tuple(a))
+    assert len(set(chosen)) > 2, f"rotation barely varies: {set(chosen)}"
+
+
+def test_per_participant_counts_add_up_to_the_fold():
+    y = np.array([1, 0, 1, 1, 0, 0, 1, 0])
+    probability = np.array([0.9, 0.2, 0.4, 0.8, 0.6, 0.1, 0.7, 0.3])
+    who = np.array(["A", "A", "A", "B", "B", "B", "C", "C"])
+    parts = ets_eval.per_participant(y, probability, who, 0.5)
+    whole = ets_eval.metrics(y, probability, 0.5)
+    for key in ("tp", "tn", "fp", "fn", "n"):
+        assert sum(m[key] for m in parts.values()) == whole[key], key
+
+
+def _fake_run(f1_like):
+    """Per-participant counts giving roughly the requested F1 each."""
+    out = {}
+    for index, quality in enumerate(f1_like):
+        tp = int(round(40 * quality))
+        out[f"P{index:02d}"] = dict(
+            ets_eval.metrics_from_counts(
+                {"tp": tp, "fn": 40 - tp, "fp": 40 - tp, "tn": 60}),
+            tp=tp, fn=40 - tp, fp=40 - tp, tn=60, n=140, positive_rate=40 / 140)
+    return out
+
+
+def test_identical_runs_show_no_difference():
+    run = _fake_run(np.linspace(0.6, 0.95, 20))
+    result = ets_eval.paired_comparison(run, run, n_boot=500)
+    assert result["mean_f1_difference"] == 0.0
+    assert result["wilcoxon_p"] == 1.0
+    assert result["pooled_f1_difference_ci_low"] <= 0.0 <= \
+        result["pooled_f1_difference_ci_high"]
+
+
+def test_a_consistent_improvement_is_detected():
+    base = np.linspace(0.6, 0.9, 20)
+    a, b = _fake_run(base), _fake_run(base + 0.05)
+    result = ets_eval.paired_comparison(a, b, n_boot=500)
+    assert result["improved"] == 20 and result["worse"] == 0
+    assert result["wilcoxon_p"] < 0.01
+    assert result["pooled_f1_difference_ci_low"] > 0.0
+
+
 if __name__ == "__main__":
     failures = 0
     for name, function in sorted(globals().items()):

@@ -345,12 +345,53 @@ not helping here and that is the finding - do not keep tuning it.
 | `ets_train.py` | The CV harness both models share |
 | `train_food_intake_v1_keras.py` | Model A — previous architecture, new data |
 | `train_food_intake_v2.py` | Model B — time-domain CNN + attention |
+| `compare_runs.py` | Paired comparison of two result JSONs, participant by participant (Wilcoxon + participant bootstrap of pooled F1) |
 | `test_pipeline.py`, `test_drift_check.py` | Tests, no database needed |
 
 Run the tests after any change: they guard silent failures (participant
 leakage, windows built from un-annotated time, `-1` treated as a reading,
 smoothing across recording gaps, context altering labels). They have already
 caught three real bugs.
+
+## Leave-one-subject-out (added 9/23)
+
+Both training scripts take `--loso`: every participant is its own fold. The
+protocol is otherwise unchanged. Three things came with it:
+
+- **Inner validation rotates under LOSO.** The old rule took the first two
+  participants in sorted order, which under LOSO hands the same two people
+  early stopping and the threshold in 18 of 20 folds. `--loso` defaults to
+  `--inner-selection rotate` (hash of seed, fold, participant). 4-fold keeps
+  `first`, so earlier 4-fold runs still reproduce.
+- **Per-participant metrics** are written to every result JSON under
+  `participants`, with counts, so `compare_runs.py` can test any two runs.
+- **Chew-count scale now comes from the fit participants only.** It used to be
+  the 99th percentile over ALL windows, test participant included. Tiny, but a
+  label statistic crossing the split. This moves Model B's numbers slightly
+  even at 4 folds, so re-run before comparing against the table above.
+
+Output files now carry the CV scheme and ablation flags in the name
+(`model_v2_metrics_w8_loso_noaux.json`), so runs no longer overwrite each other.
+The old unsuffixed files are not read by anything.
+
+```bat
+REM Model A and Model B under LOSO (about 5x the 4-fold runtime)
+python train_food_intake_v1_keras.py --config <path>\jitai_config.ini --loso
+python train_food_intake_v2.py      --config <path>\jitai_config.ini --loso
+
+REM is B better than A, participant by participant?
+python compare_runs.py results\model_v1_metrics_w8_loso.json results\model_v2_metrics_w8_loso.json
+
+REM the ablations, now with a paired test each
+python train_food_intake_v2.py --config ... --loso --fft-input
+python train_food_intake_v2.py --config ... --loso --no-auxiliary
+python train_food_intake_v2.py --config ... --loso --no-attention
+python train_food_intake_v2.py --config ... --loso --no-overlap
+python compare_runs.py results\model_v2_metrics_w8_loso_noaux.json results\model_v2_metrics_w8_loso.json
+```
+
+Check the first line the run prints: "N participants, M sessions". If M > N,
+some participants have two sessions, and LOSO correctly holds both out.
 
 ## Next steps, in order
 
