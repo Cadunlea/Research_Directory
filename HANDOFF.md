@@ -19,7 +19,7 @@ and pastes the output back. Everything below was measured that way.
 |---|---|---|---|
 | 2 | Migrate to new database, unify data access | 09/09/26 | DONE — `ets_data.py` is the unified module |
 | 3 | Data quality assessment (missingness, alignment, flagged sessions) | 09/23/26 | DONE — `probe_database.py` + `check_annotation_drift.py` cover missingness, sensor/annotation alignment and per-session coverage |
-| 4 | Literature review recommending a model approach | 09/23/26 | **NOT STARTED** — candidate papers listed at the end of this file |
+| 4 | Literature review recommending a model approach | 09/23/26 | DRAFTED — `literature_review/` (Word document, one slide, build scripts). Closest prior work is Ghosh & Sazonov 2022 (raw 4-channel input, ResNet, F1 0.906); reproduce it on the new database before claiming against it |
 | 5 | Model development and coding | 10/07/26 | AHEAD — both models built and evaluated |
 | 6 | Run, validate, iterate | 10/28/26 | AHEAD — 4-fold CV plus six ablations done |
 | 7 | Inference script | 11/04/26 | not started |
