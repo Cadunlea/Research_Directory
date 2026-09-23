@@ -8,12 +8,12 @@ nothing about whether that difference is larger than chance; this answers that
 question with the unit of variation that actually matters here, the
 participant.
 
-    python compare_runs.py results\model_v1_metrics_w8_loso.json ^
-                           results\model_v2_metrics_w8_loso.json
+    python compare_runs.py model_v1_outputs\model_v1_metrics_w8_loso.json ^
+                           model_v2_outputs\model_v2_metrics_w8_loso.json
 
     REM an ablation: full Model B against Model B without the chew head
-    python compare_runs.py results\model_v2_metrics_w8_loso.json ^
-                           results\model_v2_metrics_w8_loso_noaux.json
+    python compare_runs.py model_v2_outputs\model_v2_metrics_w8_loso.json ^
+                           model_v2_outputs\model_v2_metrics_w8_loso_noaux.json
 
 Run B is compared against run A, so positive differences mean B is better.
 Both runs should use the same CV scheme (LOSO for both, ideally). Comparing a

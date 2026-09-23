@@ -380,14 +380,14 @@ python train_food_intake_v1_keras.py --config <path>\jitai_config.ini --loso
 python train_food_intake_v2.py      --config <path>\jitai_config.ini --loso
 
 REM is B better than A, participant by participant?
-python compare_runs.py results\model_v1_metrics_w8_loso.json results\model_v2_metrics_w8_loso.json
+python compare_runs.py model_v1_outputs\model_v1_metrics_w8_loso.json model_v2_outputs\model_v2_metrics_w8_loso.json
 
 REM the ablations, now with a paired test each
 python train_food_intake_v2.py --config ... --loso --fft-input
 python train_food_intake_v2.py --config ... --loso --no-auxiliary
 python train_food_intake_v2.py --config ... --loso --no-attention
 python train_food_intake_v2.py --config ... --loso --no-overlap
-python compare_runs.py results\model_v2_metrics_w8_loso_noaux.json results\model_v2_metrics_w8_loso.json
+python compare_runs.py model_v2_outputs\model_v2_metrics_w8_loso_noaux.json model_v2_outputs\model_v2_metrics_w8_loso.json
 ```
 
 Check the first line the run prints: "N participants, M sessions". If M > N,
