@@ -366,7 +366,7 @@ an open experiment. Also: the channel attention (squeeze-excite) reweights the
 Full end-to-end description, precedent table and formal review:
 `literature_review/Model_B_Technical_Description.docx`,
 `literature_review/Model_B_Slides.pptx`,
-`literature_review/Literature_Review_Formal.docx`.
+`literature_review/Model_B_Literature_and_Lineage.docx`.
 
 ## Leave-one-subject-out (added 9/23)
 
