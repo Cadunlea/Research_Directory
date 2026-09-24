@@ -69,7 +69,7 @@ evaluation windows for both.
 
 | # | Component | Original (Model A) | New (Model B) | Why |
 |---|---|---|---|---|
-| 1 | Input representation | FFT magnitude spectrum, 513 bins x 4 ch | Band-passed time series, 1024 samples x 4 ch | Magnitude discards phase; chewing is a rhythmic envelope and a bite is a transient, both smeared by a spectrum |
+| 1 | Input representation | FFT magnitude spectrum, 513 bins x 4 ch | Time series z-scored per window (no frequency filter), 1024 samples x 4 ch | Magnitude discards phase; chewing is a rhythmic envelope and a bite is a transient, both smeared by a spectrum |
 | 2 | Normalisation | per-window z-score, missing samples left at -1 | per-window z-score + DC removal, missing excluded then set to 0 | -1 is not neutral against optical values near 3000 counts; it injects a step at every gap |
 | 3 | Channel weighting | none (fixed conv filters) | cross-channel attention (squeeze-excite) | optical carries chewing, accelerometers carry motion that is sometimes signal and often artefact |
 | 4 | Pooling | global average over frequency | attention pooling over time | averaging buries a 2 s bite inside an 8 s window |
@@ -97,7 +97,7 @@ Every row is Model B with ONE component removed, same harness, same folds.
 | *Model A, for reference* | 0.779 | | 0.730 |
 
 THE HEADLINE FINDING: the representation is doing nearly all the work.
-Replacing the FFT magnitude spectrum with the band-passed time series accounts
+Replacing the FFT magnitude spectrum with the z-scored time series accounts
 for F1 +0.087 and precision +0.180.
 
 And the sharpest evidence for it: Model B's ARCHITECTURE fed Model A's FFT
@@ -352,6 +352,21 @@ Run the tests after any change: they guard silent failures (participant
 leakage, windows built from un-annotated time, `-1` treated as a reading,
 smoothing across recording gaps, context altering labels). They have already
 caught three real bugs.
+
+## Correction (9/24): Model B's input is NOT band-passed
+
+`normalise(X, high_pass=True)` only subtracts the window mean, and the z-score
+subtracts it again, so no frequency filter is applied anywhere. The input is
+the raw signal z-scored per window and per channel. Earlier notes, slides and
+the first literature review said "band-passed"; all have been corrected.
+Whether a real filter (e.g. AIM-2's 0.1 Hz high-pass / 3 Hz low-pass) helps is
+an open experiment. Also: the channel attention (squeeze-excite) reweights the
+64 LEARNED feature channels after conv block 3, not the 4 sensors directly.
+
+Full end-to-end description, precedent table and formal review:
+`literature_review/Model_B_Technical_Description.docx`,
+`literature_review/Model_B_Slides.pptx`,
+`literature_review/Literature_Review_Formal.docx`.
 
 ## Leave-one-subject-out (added 9/23)
 

@@ -126,7 +126,7 @@ children.push(table(
     ['5', 'Mostly handcrafted features', 'Varies', 'Mostly SVM and random forest, some CNN and LSTM', 'Varies', 'Not applicable'],
     ['6', 'Raw waveform, with an internal FFT step that selects dominant periods', '3,000 samples', 'Windowed multi scale transformer with squeeze and excitation gating', 'Random 60, 20, 20 split', 'Accuracy 0.950 over all noise levels'],
     ['7', 'Single beats, min max scaled, with PCA and correlation based selection', 'One beat', 'Transformer encoder with four attention heads', 'Sample level train and test split. Patient separation not reported', 'Accuracy 0.971, F1 0.95'],
-    ['B', 'Band passed 4 channel time series, DC removed, missing samples excluded then zeroed', '8 s, with a 4 s hop at training time only', '1D CNN with squeeze and excitation, attention pooling over time and an auxiliary chew count head', 'Participant level 4 fold CV, threshold set on inner validation participants', 'F1 0.854, balanced accuracy 0.887, precision 0.876'],
+    ['B', 'Z-scored 4 channel time series with no frequency filter, missing samples excluded then zeroed', '8 s, with a 4 s hop at training time only', '1D CNN with squeeze and excitation, attention pooling over time and an auxiliary chew count head', 'Participant level 4 fold CV, threshold set on inner validation participants', 'F1 0.854, balanced accuracy 0.887, precision 0.876'],
   ],
   [360, 2250, 1250, 2250, 2014, 2100],
   { highlight: [7] },
@@ -144,7 +144,7 @@ children.push(table(
     ['2022', 'Ghosh and Sazonov', 'Raw time series and ResNet', 'Accelerometer and optical', '0.906, free living'],
     ['2024', 'Ghosh et al.', 'Wavelet scalogram and 2D CNN', 'Accelerometer only', '0.776, free living'],
     ['Prior', 'Previous in house model, Model A', 'FFT magnitude spectrum, 513 bins, and 1D CNN over frequency', 'Accelerometer and optical', '0.779, new database'],
-    ['2026', 'Model B, this project', 'Band passed time series and 1D CNN with attention', 'Accelerometer and optical', '0.854, new database'],
+    ['2026', 'Model B, this project', 'Z-scored time series and 1D CNN with attention', 'Accelerometer and optical', '0.854, new database'],
     ['2026', 'Model B architecture with FFT input', 'FFT magnitude spectrum', 'Accelerometer and optical', '0.767, new database'],
   ],
   [800, 2500, 3024, 2000, 1900],
@@ -160,7 +160,7 @@ children.push(Caption('Table 4. Precedent and measured effect for each component
 children.push(table(
   ['Component', 'Closest precedent', 'Status', 'Measured effect in Model B'],
   [
-    ['Time domain, band passed input', 'Raw four channel input in Ghosh and Sazonov 2022. Chewing band filtering in Doulah et al. 2021', 'Established in the lab', 'F1 +0.087, precision +0.180. Larger than the fold spread'],
+    ['Time domain input', 'Raw four channel input in Ghosh and Sazonov 2022', 'Established in the lab', 'F1 +0.087, precision +0.180. Larger than the fold spread'],
     ['Squeeze and excitation channel weighting', 'Hu et al. 2018. Also used as the gating step in Yang et al. 2026', 'Standard building block', 'F1 +0.007 together with attention pooling. Inside noise'],
     ['Attention pooling over time', 'Attention based pooling in Ilse et al. 2018. The reviewed intake papers use global average pooling or an LSTM', 'Standard block, not used in the reviewed AIM papers', 'Counted with the row above'],
     ['Auxiliary chew count head', 'Chew counting from sensor signals by Farooq and Sazonov, summarised in Usman and Chen 2021, but as a separate stage', 'Not found in the reviewed papers as a training target inside the classifier', 'F1 +0.006. Inside noise'],
@@ -202,7 +202,7 @@ children.push(table(
 
 // Recommendation
 children.push(H1('Recommendation'));
-children.push(P(['I recommend continuing with a ', { b: 'compact one dimensional convolutional network on band passed four channel time series' }, ', evaluated with subject independent validation. This agrees with the strongest result in the lab\'s own prior work and with the controlled ablation on the new database, where the representation accounted for nearly all of the improvement.']));
+children.push(P(['I recommend continuing with a ', { b: 'compact one dimensional convolutional network on z-scored four channel time series' }, ', evaluated with subject independent validation. This agrees with the strongest result in the lab\'s own prior work and with the controlled ablation on the new database, where the representation accounted for nearly all of the improvement.']));
 children.push(P('I do not recommend moving to a transformer at this stage. The reviewed transformer results come from far larger datasets and from splits that do not separate subjects, and my own attention components did not separate from noise with 20 sessions.'));
 children.push(P('The places where this project can add something new are mostly outside the architecture. The first is a clean comparison against the 2022 ResNet on the new database. The second is using the unannotated sessions through self supervised pretraining, which addresses the limit on labelled data directly. The third is the set of controlled negative results on smoothing and context, which add a subject independent view to a question the lab has so far studied under different conditions.'));
 

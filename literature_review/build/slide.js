@@ -20,7 +20,7 @@ const rows = [
   ['Ghosh et al. 2024', 'Wavelet scalogram', '2D CNN', 'LOSO, 30', '0.776'],
   ['Diou et al. 2022', 'Raw wrist IMU, bites', 'CNN and LSTM', 'LOSO', '0.923'],
   ['Model A, previous design', 'FFT spectrum', '1D CNN', '4 fold', '0.779'],
-  ['Model B, this work', 'Band passed time series', '1D CNN, attention', '4 fold', '0.854'],
+  ['Model B, this work', 'Z-scored time series', '1D CNN, attention', '4 fold', '0.854'],
 ];
 const body = rows.map((r, i) => i === 0 ? r : r.map((c, j) => ({
   text: c,
@@ -60,7 +60,7 @@ cards.forEach(([head, text], i) => {
 s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.5, y: 6.2, w: 12.35, h: 0.8, fill: { color: NAVY }, line: { color: NAVY }, rectRadius: 0.08 });
 s.addText([
   { text: 'Recommendation   ', options: { bold: true, color: 'FFFFFF' } },
-  { text: 'A compact 1D CNN on band passed four channel time series, with subject independent validation. No transformer at this data scale.', options: { color: 'FFFFFF' } },
+  { text: 'A compact 1D CNN on z-scored four channel time series, with subject independent validation. No transformer at this data scale.', options: { color: 'FFFFFF' } },
 ], { x: 0.75, y: 6.2, w: 11.9, h: 0.8, fontFace: FONT, fontSize: 15, valign: 'middle', margin: 0, isTextBox: true });
 
 s.addNotes([
