@@ -45,7 +45,7 @@ decision, the reason for it, and the literature it is grounded in.}
 \multicolumn{5}{@{}l}{\textit{Training}} \\
 12 & Loss & Binary cross-entropy (weight 1.0) + chew MSE (weight 0.2); class-balanced sample weights computed per fold & Auxiliary loss is a regulariser, not the objective. Eating fraction ranges 0--86\% by session, so the rare class changes with the fold & \citet{caruana1997multitask} \\
 13 & Augmentation & 50\% overlapping windows (4\,s hop) at training time only & Roughly doubles the training windows at no collection cost; evaluation stays on the non-overlapping grid so no second is scored twice & \citet{um2017augmentation} \\
-14 & Optimisation & Adam, learning rate 0.001, batch 64, up to 80 epochs, early stopping (patience 12) and learning-rate halving on validation loss & Standard; validation participants are held out from training, never random windows & -- \\
+14 & Optimisation & Adam, learning rate 0.0003, batch 64, up to 80 epochs, early stopping (patience 12) and learning-rate halving on validation ROC AUC & At 0.001 the validation optimum fell at the first epoch in most folds; the lower rate moves it later. Validation participants are held out from training, never random windows & -- \\
 
 \multicolumn{5}{@{}l}{\textit{Evaluation}} \\
 15 & Validation & Leave-one-subject-out: 43 folds, each holding out one participant with all of their sessions. Inner validation on further held-out participants & Windows of one meal are near-duplicates; any split below participant level leaks and overstates performance. Leave-one-subject-out is the protocol of the AIM-2 and smartwatch intake studies & \citet{doulah2021aim2, kyritsis2021endtoend, diou2022intake, saeb2017need} \\

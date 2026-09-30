@@ -34,11 +34,18 @@ recording, of which 9.6 hours is eating. The eating fraction ranges from 0\%
 to 86\% by session. Validation is leave-one-subject-out: 43 folds, each
 holding out one participant with all of their sessions.
 
-In a preliminary participant-level 5-fold cross-validation, pooled over all
-10,891 held-out non-overlapping windows, the model reaches F1 0.858,
-accuracy 0.891, balanced accuracy 0.881, precision 0.884 and recall 0.834,
-with 32 false alarms per hour of non-eating. Per-participant F1 has mean
-0.835 (standard deviation 0.136, median 0.878); the spread between people is
-the honest measure of how the model generalises to someone new, and it is
-larger than any difference between design choices seen so far.
-Leave-one-subject-out results will replace these figures.
+Under leave-one-subject-out validation, pooled over all 10,891 held-out
+non-overlapping windows, the model reaches F1 0.856, accuracy 0.887,
+balanced accuracy 0.881, precision 0.860, recall 0.853 and specificity
+0.909, with 41 false alarms per hour of non-eating. Per-participant F1 has
+mean 0.836 (standard deviation 0.117, median 0.867), and three participants
+fall below 0.55. The same configuration under participant-level 5-fold
+cross-validation gives F1 0.864 and accuracy 0.893, so the estimate is not
+sensitive to the validation scheme.
+
+The training configurations tested (early-stopping criterion, learning rate,
+augmentation) differ by no more than 0.006 F1, while replacing the time
+series with a magnitude spectrum lowers F1 from 0.858 to 0.796 and raises
+false alarms from 32 to 81 per hour (5-fold). The input representation
+therefore carries the performance, and the variation between participants
+is larger than any difference between training configurations.
