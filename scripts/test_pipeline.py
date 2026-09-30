@@ -305,6 +305,137 @@ def test_threshold_is_chosen_to_maximise_the_objective():
     assert ets_eval.metrics(y_true, probability, threshold)["f1"] == 1.0
 
 
+# --------------------------------------------------------------------------- #
+# leave-one-subject-out and paired comparison
+# --------------------------------------------------------------------------- #
+def test_loso_folds_hold_out_exactly_one_participant_each():
+    participants = np.array(PARTICIPANTS)
+    folds = ets_data.participant_folds(participants, len(PARTICIPANTS), seed=9)
+    assert all(len(fold) == 1 for fold in folds)
+    assert sorted(p for fold in folds for p in fold) == sorted(PARTICIPANTS)
+
+
+def test_inner_participants_never_include_the_test_participant():
+    import ets_train
+    for index, held_out in enumerate(
+            ets_data.participant_folds(np.array(PARTICIPANTS), 8, seed=9)):
+        train = [p for p in PARTICIPANTS if p not in held_out]
+        for mode in ("first", "rotate"):
+            inner = ets_train.choose_inner_participants(train, 2, index, 9, mode)
+            assert len(inner) == 2
+            assert not set(inner) & set(held_out), f"{mode} leaked the test fold"
+            assert set(inner) <= set(train)
+
+
+def test_first_selection_reproduces_the_original_behaviour():
+    """Earlier 4-fold numbers came from np.unique(train)[:2]. 'first' must give
+    exactly that, or those results stop being reproducible."""
+    import ets_train
+    train = np.array(PARTICIPANTS[::-1])
+    got = ets_train.choose_inner_participants(train, 2, 0, 9, "first")
+    assert list(got) == list(np.unique(train)[:2])
+
+
+def test_rotating_selection_is_deterministic_and_actually_rotates():
+    """Under LOSO, 'first' would give the same two people the threshold decision
+    in nearly every fold. 'rotate' must spread that job around, and give the
+    same answer on every run."""
+    import ets_train
+    chosen = []
+    for index in range(len(PARTICIPANTS)):
+        train = [p for i, p in enumerate(PARTICIPANTS) if i != index]
+        a = ets_train.choose_inner_participants(train, 2, index, 9, "rotate")
+        b = ets_train.choose_inner_participants(train, 2, index, 9, "rotate")
+        assert list(a) == list(b), "rotation is not deterministic"
+        chosen.append(tuple(a))
+    assert len(set(chosen)) > 2, f"rotation barely varies: {set(chosen)}"
+
+
+def test_per_participant_counts_add_up_to_the_fold():
+    y = np.array([1, 0, 1, 1, 0, 0, 1, 0])
+    probability = np.array([0.9, 0.2, 0.4, 0.8, 0.6, 0.1, 0.7, 0.3])
+    who = np.array(["A", "A", "A", "B", "B", "B", "C", "C"])
+    parts = ets_eval.per_participant(y, probability, who, 0.5)
+    whole = ets_eval.metrics(y, probability, 0.5)
+    for key in ("tp", "tn", "fp", "fn", "n"):
+        assert sum(m[key] for m in parts.values()) == whole[key], key
+
+
+def _fake_run(f1_like):
+    """Per-participant counts giving roughly the requested F1 each."""
+    out = {}
+    for index, quality in enumerate(f1_like):
+        tp = int(round(40 * quality))
+        out[f"P{index:02d}"] = dict(
+            ets_eval.metrics_from_counts(
+                {"tp": tp, "fn": 40 - tp, "fp": 40 - tp, "tn": 60}),
+            tp=tp, fn=40 - tp, fp=40 - tp, tn=60, n=140, positive_rate=40 / 140)
+    return out
+
+
+def test_identical_runs_show_no_difference():
+    run = _fake_run(np.linspace(0.6, 0.95, 20))
+    result = ets_eval.paired_comparison(run, run, n_boot=500)
+    assert result["mean_f1_difference"] == 0.0
+    assert result["wilcoxon_p"] == 1.0
+    assert result["pooled_f1_difference_ci_low"] <= 0.0 <= \
+        result["pooled_f1_difference_ci_high"]
+
+
+def test_a_consistent_improvement_is_detected():
+    base = np.linspace(0.6, 0.9, 20)
+    a, b = _fake_run(base), _fake_run(base + 0.05)
+    result = ets_eval.paired_comparison(a, b, n_boot=500)
+    assert result["improved"] == 20 and result["worse"] == 0
+    assert result["wilcoxon_p"] < 0.01
+    assert result["pooled_f1_difference_ci_low"] > 0.0
+
+
+# --------------------------------------------------------------------------- #
+# sampling rate and run naming
+# --------------------------------------------------------------------------- #
+def test_downsampling_keeps_duration_and_the_chewing_rhythm():
+    """32 Hz must mean 8 s is 256 samples, and a 1.4 Hz chewing rhythm must
+    still be the dominant frequency afterwards - aliasing would move it."""
+    seconds, fs = 8, 128
+    times = np.arange(seconds * fs) / fs
+    signal = np.sin(2 * np.pi * 1.4 * times) + 0.5 * np.sin(2 * np.pi * 40 * times)
+    window = np.repeat(signal[None, :, None], 4, axis=2).astype(np.float32)
+    for rate in (64, 32, 16):
+        out = ets_data.downsample(window, rate)
+        assert out.shape == (1, seconds * rate, 4), (rate, out.shape)
+        spectrum = np.abs(np.fft.rfft(out[0, :, 0]))
+        peak = np.argmax(spectrum[1:]) + 1
+        assert abs(peak / seconds - 1.4) < 0.2, (
+            f"{rate} Hz: dominant rhythm at {peak / seconds:.2f} Hz, not 1.4")
+
+
+def test_downsampling_rejects_rates_that_do_not_divide_128():
+    window = np.zeros((1, 1024, 4), dtype=np.float32)
+    try:
+        ets_data.downsample(window, 50)
+    except ValueError:
+        return
+    raise AssertionError("50 Hz should be rejected")
+
+
+def test_every_configuration_gets_its_own_results_file():
+    """Runs used to share one file name and overwrite each other. Every flag
+    that changes what is trained must change the name."""
+    import train_food_intake as t
+    parser = t.build_parser()
+    variants = [[], ["--input", "fft"], ["--sample-rate", "32"],
+                ["--window-seconds", "4"], ["--context-seconds", "8"],
+                ["--no-overlap"], ["--no-channel-attention"],
+                ["--pooling", "average"], ["--transformer-layers", "1"],
+                ["--chew-weight", "0"], ["--chew-weight", "0.5"],
+                ["--architecture", "fcn"], ["--architecture", "resnet"],
+                ["--folds", "5"], ["--seed", "10"], ["--repeats", "3"],
+                ["--ensemble", "3"], ["--smoothing", "3"]]
+    tags = [t.run_tag(t.normalise_config(parser.parse_args(v))) for v in variants]
+    assert len(set(tags)) == len(tags), sorted(tags)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, function in sorted(globals().items()):

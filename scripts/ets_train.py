@@ -1,22 +1,27 @@
 r"""
-ets_train.py - the cross-validation harness both models run through.
+ets_train.py - the cross-validation harness every configuration runs through.
 
-Both training scripts hand this module a feature transform and a model factory
-and get back identical bookkeeping. That is the point: if the two models were
-evaluated by separate code, any difference in their scores could be a
-difference in evaluation rather than in the model, and the comparison would
-prove nothing.
+The training script hands this module a feature transform and a model factory
+and gets back identical bookkeeping for every configuration. That is the
+point: if two configurations were evaluated by separate code, any difference
+in their scores could be a difference in evaluation rather than in the model,
+and the comparison would prove nothing.
 
 THE PROTOCOL
 ------------
 1. Participants are split into folds. Never windows - see ets_data.participant_folds.
+   The default is leave-one-subject-out (LOSO): every participant is a fold
+   of one. Saeb et al. (2017) showed that anything short of a subject-wise
+   split overstates performance on new people, and with a few dozen
+   participants LOSO is affordable. --folds K gives K-fold for quick runs.
 2. Within each training fold a few participants are held out again, as an INNER
    validation set used for early stopping and for choosing the decision
    threshold. The test fold is not touched by either.
 3. The chosen threshold is applied unchanged to the test fold.
 4. Test windows are the non-overlapping ones only, even when training used
-   overlapping windows, so every model is scored on the same windows the
-   previous model was scored on.
+   overlapping windows, so every configuration is scored on the same windows.
+5. Every held-out participant is also scored on their own, so two runs can be
+   compared participant by participant (ets_eval.paired_comparison).
 
 Steps 2 and 4 are what make the resulting number an estimate of performance on
 a participant the model has never seen.
@@ -24,7 +29,9 @@ a participant the model has never seen.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -70,9 +77,8 @@ def aligned_mask(windows: ets_data.WindowSet) -> np.ndarray:
 
     When training uses a half-window hop, consecutive windows share half their
     samples. Scoring on those would count the same seconds twice and inflate
-    the result; it would also stop the numbers being comparable with the
-    previous model, which used non-overlapping windows. So evaluation always
-    uses this subset.
+    the result, and would make runs trained at different hops score on
+    different windows. So evaluation always uses this subset.
     """
     if abs(windows.hop_seconds - windows.window_seconds) < 1e-9:
         return np.ones(len(windows), dtype=bool)
@@ -98,6 +104,83 @@ class FoldResult:
     probabilities: np.ndarray
     indices: np.ndarray
     history: Dict[str, List[float]] = field(default_factory=dict)
+    participant_metrics: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    inner_participants: List[str] = field(default_factory=list)
+    epochs: int = 0
+    seconds: float = 0.0
+
+
+# --------------------------------------------------------------------------- #
+# cross-validation options, shared by every training script
+# --------------------------------------------------------------------------- #
+def add_cv_arguments(parser) -> None:
+    parser.add_argument("--folds", type=int, default=None,
+                        help="K-fold participant cross-validation instead of "
+                             "the default leave-one-subject-out. Faster; use "
+                             "for quick checks, LOSO for reported numbers")
+    parser.add_argument("--inner-participants", type=int, default=2,
+                        help="participants held out of each training fold for "
+                             "early stopping and the threshold (default 2)")
+    parser.add_argument("--inner-selection", choices=("auto", "first", "rotate"),
+                        default="auto",
+                        help="which training participants become the inner "
+                             "validation set. 'first' is the original "
+                             "alphabetical choice; 'rotate' spreads that job "
+                             "around. auto = rotate under LOSO, first otherwise")
+
+
+def is_loso(args) -> bool:
+    return getattr(args, "folds", None) in (None, 0)
+
+
+def resolve_inner_selection(args) -> str:
+    mode = getattr(args, "inner_selection", "auto")
+    if mode == "auto":
+        return "rotate" if is_loso(args) else "first"
+    return mode
+
+
+def cv_tag(args) -> str:
+    return "loso" if is_loso(args) else f"{args.folds}fold"
+
+
+def choose_inner_participants(train_participants: Sequence[str], count: int,
+                              fold_index: int, seed: int, mode: str
+                              ) -> np.ndarray:
+    """The inner validation participants for one fold, never the test ones.
+
+    'first' takes the first `count` in sorted order - what every 4-fold result
+    before LOSO used, kept so those stay reproducible. Under LOSO it would hand
+    the threshold decision to the same two people in almost every fold, so
+    'rotate' orders participants by a seeded hash and starts at a different
+    place in that order each fold. Deterministic either way.
+    """
+    unique = np.unique(np.asarray(train_participants))
+    count = min(count, max(len(unique) - 1, 0))
+    if mode == "first":
+        return unique[:count]
+    if mode != "rotate":
+        raise ValueError(f"unknown inner selection {mode!r}")
+    keyed = sorted(unique, key=lambda p: hashlib.md5(
+        f"{seed}:{p}".encode()).hexdigest())
+    start = (fold_index * count) % len(keyed)
+    return np.asarray([keyed[(start + i) % len(keyed)] for i in range(count)])
+
+
+def fold_records(results: Sequence["FoldResult"]) -> List[Dict]:
+    return [{"fold": r.fold, "held_out": r.held_out, "threshold": r.threshold,
+             "inner_participants": r.inner_participants, "epochs": r.epochs,
+             "seconds": round(r.seconds, 1), "metrics": r.metrics,
+             "smoothed_metrics": r.smoothed_metrics} for r in results]
+
+
+def participant_records(results: Sequence["FoldResult"]
+                        ) -> Dict[str, Dict[str, float]]:
+    """Every held-out participant's metrics, from whichever fold held them."""
+    merged: Dict[str, Dict[str, float]] = {}
+    for result in results:
+        merged.update(result.participant_metrics)
+    return dict(sorted(merged.items()))
 
 
 def class_weights(y: np.ndarray) -> Dict[int, float]:
@@ -121,14 +204,16 @@ def cross_validate(
         build_model: Callable[[Tuple[int, ...]], "object"],
         *,
         n_folds: int = 4,
+        loso: bool = False,
+        inner_selection: str = "first",
         seed: int = 9,
         epochs: int = 60,
         batch_size: int = 64,
         patience: int = 10,
         # Two. It was briefly raised to three to steady a wild threshold (0.67
         # on one fold), but a held-out participant is ~7% of the training data
-        # here, and both models lost ground when it went up: Model A pooled F1
-        # 0.777 -> 0.765, Model B 0.853 -> 0.828. Threshold stability is now
+        # here, and both the FFT baseline (pooled F1 0.777 -> 0.765) and the
+        # model (0.853 -> 0.828) lost ground when it went up. Threshold stability is now
         # handled where it belongs - in ets_eval.choose_threshold, which takes
         # the centre of the plateau rather than the argmax - so it no longer has
         # to be bought with training data.
@@ -147,6 +232,8 @@ def cross_validate(
 
     features = transform(windows.X)
     evaluate_on = aligned_mask(windows)
+    if loso:
+        n_folds = len(np.unique(windows.participants))
     folds = ets_data.participant_folds(windows.participants, n_folds, seed)
 
     if verbose:
@@ -154,6 +241,10 @@ def cross_validate(
         print(f"input shape: {features.shape[1:]}")
         print(f"evaluating on {int(evaluate_on.sum()):,} non-overlapping "
               f"windows of {len(windows):,} total")
+        scheme = "leave-one-subject-out" if loso else f"{n_folds}-fold"
+        print(f"validation: {scheme}, {len(folds)} folds, inner validation = "
+              f"{inner_validation_participants} participants ({inner_selection})")
+    started = time.time()
 
     # The auxiliary target is chews per window, scaled to a comparable range so
     # its loss does not dominate the classification loss purely by magnitude.
@@ -170,8 +261,11 @@ def cross_validate(
         # Inner split: hold out whole participants again, for early stopping and
         # the threshold. Taking a random slice of windows instead would leak -
         # the neighbouring window of the same meal is nearly the same window.
+        fold_started = time.time()
         train_participants = np.unique(windows.participants[train_rows])
-        inner_held = train_participants[:inner_validation_participants]
+        inner_held = choose_inner_participants(
+            train_participants, inner_validation_participants, index, seed,
+            inner_selection)
         inner_mask = np.isin(windows.participants[train_rows], inner_held)
         fit_rows = train_rows[~inner_mask]
         validation_rows = train_rows[inner_mask]
@@ -263,9 +357,9 @@ def cross_validate(
         # the non-overlapping grid (to mirror test conditions exactly) halves
         # the data the threshold is estimated from, and a threshold is a single
         # scalar: overlapping windows do not bias it, they only weight some
-        # stretches of a meal slightly more. Model B lost more than Model A when
-        # this was restricted, which fits - Model A trains on a hop equal to its
-        # window, so the restriction changed nothing for it.
+        # stretches of a meal slightly more. Measured: restricting it cost the
+        # overlapping-hop model more than the FFT baseline, which trains on a
+        # hop equal to its window and so was not affected at all.
         validation_probability = predict(validation_rows)
         threshold = ets_eval.choose_threshold(
             windows.y[validation_rows], validation_probability, "f1")
@@ -301,20 +395,32 @@ def cross_validate(
         smoothed_metrics = ets_eval.metrics(windows.y[test_rows], smoothed,
                                             smoothed_threshold)
 
+        epochs_run = len(history.history["loss"])
         results.append(FoldResult(
-            fold=index + 1, held_out=list(held_out), threshold=threshold,
+            fold=index + 1, held_out=[str(p) for p in held_out],
+            threshold=threshold,
             metrics=fold_metrics, smoothed_metrics=smoothed_metrics,
             probabilities=test_probability, indices=test_rows,
             history={k: [float(v) for v in vals]
-                     for k, vals in history.history.items()}))
+                     for k, vals in history.history.items()},
+            participant_metrics=ets_eval.per_participant(
+                windows.y[test_rows], test_probability,
+                windows.participants[test_rows], threshold),
+            inner_participants=[str(p) for p in inner_held],
+            epochs=epochs_run, seconds=time.time() - fold_started))
 
         if verbose:
-            epochs_run = len(history.history["loss"])
             members = f" x{len(models)}" if len(models) > 1 else ""
-            print(f"  fold {index + 1}{members}  held out {', '.join(held_out):<46} "
+            smoothed_note = (f"(smoothed {smoothed_metrics['f1']:.3f})  "
+                             if smoothing_kernel > 1 else "")
+            elapsed = time.time() - started
+            remaining = elapsed / (index + 1) * (len(folds) - index - 1)
+            print(f"  fold {index + 1:>2}/{len(folds)}{members}  held out "
+                  f"{', '.join(map(str, held_out)):<22} "
                   f"n={len(test_rows):>5,}  F1 {fold_metrics['f1']:.3f} "
-                  f"(smoothed {smoothed_metrics['f1']:.3f})  "
-                  f"acc {fold_metrics['accuracy']:.3f}  thr {threshold:.2f}  "
-                  f"{epochs_run} epochs")
+                  f"{smoothed_note}acc {fold_metrics['accuracy']:.3f}  "
+                  f"thr {threshold:.2f}  {epochs_run} ep  "
+                  f"{time.time() - fold_started:.0f}s  "
+                  f"(~{remaining / 60:.0f} min left)", flush=True)
 
     return results, pooled_probability

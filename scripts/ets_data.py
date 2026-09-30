@@ -1,7 +1,7 @@
 r"""
 ets_data.py - the single place that turns the ETS database into training
-windows. Imported by both training scripts so they cannot disagree about what
-the data means.
+windows. Every script that reads the data imports this, so none of them can
+disagree about what the data means.
 
 WHAT THE DATABASE ACTUALLY CONTAINS  (measured by probe_database.py, 2026-09-15)
 -------------------------------------------------------------------------------
@@ -95,7 +95,6 @@ MAX_MISSING_FRACTION = 0.5
 # ...and enough annotated samples for its label to mean anything.
 MIN_LABEL_COVERAGE = 0.5
 # A window is EATING when more than half its annotated samples are eating.
-# Same rule as the previous model, kept so the comparison stays honest.
 EATING_THRESHOLD = 0.5
 
 
@@ -526,16 +525,53 @@ def normalise(X: np.ndarray, high_pass: bool = False) -> np.ndarray:
 
 
 def fft_features(X: np.ndarray) -> np.ndarray:
-    """(n, bins, 4) log-magnitude spectra - the previous model's representation.
+    """(n, bins, 4) log-magnitude spectra of raw windows.
 
     Normalisation happens first so missing samples are 0 rather than -1.
     """
-    normalised = normalise(X)
+    return magnitude_spectrum(normalise(X))
+
+
+def magnitude_spectrum(normalised: np.ndarray) -> np.ndarray:
+    """(n, bins, 4) standardised log-magnitude spectra of NORMALISED windows.
+
+    The representation ablation: it keeps which rhythms are present in the
+    window and discards when they occur. Split out from fft_features so it can
+    follow downsample(), which needs normalised input.
+    """
     magnitude = np.abs(np.fft.rfft(normalised, axis=1)).astype(np.float32)
     magnitude = np.log1p(magnitude)
     mean = magnitude.mean(axis=1, keepdims=True)
     std = magnitude.std(axis=1, keepdims=True)
     return ((magnitude - mean) / np.where(std < 1e-8, 1.0, std)).astype(np.float32)
+
+
+# Sampling rates the model can be trained at. Each divides 128 Hz exactly, so
+# downsampling is a single integer decimation.
+SAMPLE_RATES = (128, 64, 32, 16)
+
+
+def downsample(features: np.ndarray, target_fs: float) -> np.ndarray:
+    """Decimate NORMALISED windows (n, samples, channels) to `target_fs`.
+
+    Anti-aliased: a low-pass FIR filter runs before every sample is dropped,
+    zero-phase so chewing peaks do not move in time. Plain striding would fold
+    everything above the new Nyquist frequency back into the chewing band.
+
+    Runs after normalise(), so missing samples are already 0 (the channel
+    mean) and the filter smooths across a gap rather than across a -1 step.
+    Chewing sits at 0.94-2.17 Hz (Po et al. 2011), so even 16 Hz keeps a
+    Nyquist frequency of 8 Hz, well above it.
+    """
+    factor = SENSOR_FS / float(target_fs)
+    if abs(factor - 1.0) < 1e-9:
+        return features
+    if abs(factor - round(factor)) > 1e-9 or round(factor) < 1:
+        raise ValueError(f"{target_fs} Hz does not divide {SENSOR_FS:g} Hz; "
+                         f"use one of {SAMPLE_RATES}")
+    from scipy.signal import decimate
+    return decimate(features, int(round(factor)), axis=1, ftype="fir",
+                    zero_phase=True).astype(np.float32)
 
 
 # --------------------------------------------------------------------------- #

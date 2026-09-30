@@ -13,6 +13,33 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 1/10/26 — the clean scripts folder
+
+All current code is in `scripts/` (copy it to
+`...\python_code\study_eating_trajectory\scripts`). Everything else was
+removed; git history keeps it. `scripts/README.md` has the full flag table and
+run order.
+
+- `train_food_intake.py` replaces v1 and v2. Model A/B no longer exist; the
+  default IS the model. Old flags renamed: `--fft-input` -> `--input fft`,
+  `--no-auxiliary` -> `--chew-weight 0`, `--no-attention` ->
+  `--no-channel-attention --pooling average`.
+- New: leave-one-subject-out by default (`--folds K` for quick runs),
+  `--sample-rate`, `--transformer-layers`, `--architecture fcn/resnet`,
+  `--chew-weight`, `--repeats`, `--sweep`, `--threads`. Smoothing is off by
+  default.
+- Every run writes `results/<config tag>.json` + `_predictions.npz`; runs no
+  longer overwrite each other.
+- `compare_runs.py` does the paired per-participant statistics (bootstrap CI,
+  Wilcoxon). `plot_results.py` does the grayscale figures.
+- The LOSO harness in the repo was REBUILT here to the spec of the uploaded
+  tests (the local LOSO version was never pushed). Inner-validation selection
+  under LOSO is `rotate`; LOSO numbers may differ slightly from the 9/22
+  slide for that reason.
+- `participant_info` rows are enrolled sessions, not annotated ones. The
+  training run prints `N session(s) with ground truth`: that is the real
+  count.
+
 ## UPDATE 30/9/26 — read this before the rest
 
 **Model A is retired as a concept.** Model B is simply "the model". The PI said

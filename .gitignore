@@ -7,3 +7,6 @@ __pycache__/
 *.keras
 fft_food_intake_outputs*/
 jitai_config.ini
+results/
+figures/
+results_summary.csv

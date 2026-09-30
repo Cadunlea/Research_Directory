@@ -1,19 +1,19 @@
 r"""
-ets_eval.py - metrics, threshold selection, temporal smoothing and reporting,
-shared by both training scripts so their numbers are directly comparable.
+ets_eval.py - metrics, threshold selection, temporal smoothing, reporting and
+paired comparison between runs, shared by every training configuration so
+their numbers are directly comparable.
 
 WHY F1 AND BALANCED ACCURACY, NOT ACCURACY ALONE
 ------------------------------------------------
 Accuracy moves with class balance. Per-session eating fraction in this dataset
 runs from 17% to 74%, so a model that predicted 'not eating' for every window
 in AIM122571's session would score 83% accuracy while being useless. Accuracy
-is still reported - it is the number the previous model was quoted at - but F1
-and balanced accuracy are what the comparison rests on.
+is still reported, but F1 and balanced accuracy are what comparisons rest on.
 
 THRESHOLD SELECTION
 -------------------
-The previous model fixed the decision threshold at 0.40. A threshold is a
-parameter like any other: choosing it on the test set inflates the score.
+A threshold is a parameter like any other: choosing it on the test set
+inflates the score.
 Here it is chosen on the TRAINING folds only, then applied unchanged to the
 held-out fold, so the reported number is what a new participant would get.
 """
@@ -92,7 +92,7 @@ def choose_threshold(y_true: np.ndarray, y_probability: np.ndarray,
     reader can see, invites a question the argmax cannot answer - and the
     plateau centre gives the same score with a stable number beside it.
 
-    The measured cause of the small drop that prompted this (Model A pooled F1
+    The measured cause of the small drop that prompted this (FFT baseline pooled F1
     0.777 -> 0.765) is more likely the third inner-validation participant,
     which removes a participant from the fit set; the difference is well inside
     the +-0.046 fold-to-fold spread either way.
@@ -184,34 +184,35 @@ def metrics_from_counts(counts: Dict[str, float]) -> Dict[str, float]:
             "specificity": specificity}
 
 
-# The numbers to beat, quoted so every report states them rather than relying
-# on anyone remembering. The previous model's figures come from a SINGLE
-# 2-participant test split of 249 windows, WITH the phantom -8 s shift applied;
-# they are a target, not a like-for-like comparison, and should be described
-# that way.
-BASELINE = {
-    "name": "previous FFT-CNN (2-participant split, 249 windows, -8s shift)",
-    "accuracy": 0.8032, "balanced_accuracy": 0.8252, "f1": 0.7879,
-    "precision": 0.6842, "recall": 0.9286, "specificity": 0.7219,
-}
-RANDOM_FOREST_F1 = 0.81      # AIM-2 random forest paper
+def false_alarms_per_hour(fp: float, tn: float, window_seconds: float) -> float:
+    """False positives per hour of NON-eating time.
+
+    The number that matters in free living, where most of the day is not a
+    meal: it says how often the detector would fire wrongly, in units a
+    reader can picture, independent of how much eating the test set held.
+    """
+    hours = (fp + tn) * window_seconds / 3600.0
+    return float(fp / hours) if hours else 0.0
 
 
 def report(title: str, fold_metrics: Sequence[Dict[str, float]],
+           window_seconds: Optional[float] = None,
+           participant_metrics: Optional[Dict[str, Dict[str, float]]] = None,
            extra: Optional[Dict[str, str]] = None) -> Dict[str, float]:
     summary = aggregate(fold_metrics)
     line = "=" * 74
     print(f"\n{line}\n  {title}\n{line}")
 
-    print(f"\n  {'fold':<6}{'n':>7}{'acc':>8}{'bal acc':>9}{'F1':>8}"
-          f"{'prec':>8}{'recall':>8}{'thr':>7}")
-    for index, fold in enumerate(fold_metrics):
-        print(f"  {index + 1:<6}{fold['n']:>7,}{fold['accuracy']:>8.3f}"
-              f"{fold['balanced_accuracy']:>9.3f}{fold['f1']:>8.3f}"
-              f"{fold['precision']:>8.3f}{fold['recall']:>8.3f}"
-              f"{fold['threshold']:>7.2f}")
+    if len(fold_metrics) <= 12:
+        print(f"\n  {'fold':<6}{'n':>7}{'acc':>8}{'bal acc':>9}{'F1':>8}"
+              f"{'prec':>8}{'recall':>8}{'thr':>7}")
+        for index, fold in enumerate(fold_metrics):
+            print(f"  {index + 1:<6}{fold['n']:>7,}{fold['accuracy']:>8.3f}"
+                  f"{fold['balanced_accuracy']:>9.3f}{fold['f1']:>8.3f}"
+                  f"{fold['precision']:>8.3f}{fold['recall']:>8.3f}"
+                  f"{fold['threshold']:>7.2f}")
 
-    print(f"\n  across folds (mean +- sd)")
+    print(f"\n  across {len(fold_metrics)} folds (mean +- sd)")
     for key in ("accuracy", "balanced_accuracy", "f1", "precision", "recall",
                 "specificity"):
         print(f"    {key:<20}{summary[f'{key}_mean']:.4f} "
@@ -223,24 +224,97 @@ def report(title: str, fold_metrics: Sequence[Dict[str, float]],
         print(f"    {key:<20}{summary[f'pooled_{key}']:.4f}")
     print(f"    confusion            tp={summary['tp']:,}  fp={summary['fp']:,}  "
           f"fn={summary['fn']:,}  tn={summary['tn']:,}")
+    if window_seconds:
+        summary["false_alarms_per_hour"] = false_alarms_per_hour(
+            summary["fp"], summary["tn"], window_seconds)
+        print(f"    false alarms / hour  {summary['false_alarms_per_hour']:.1f}"
+              f"  (per hour of non-eating)")
 
-    print(f"\n  versus the targets")
-    for key, label in (("f1", "F1"), ("accuracy", "accuracy"),
-                       ("balanced_accuracy", "balanced accuracy")):
-        got = summary[f"pooled_{key}"]
-        delta = got - BASELINE[key]
-        print(f"    {label:<20}{got:.4f}  vs {BASELINE[key]:.4f} previous "
-              f"({delta:+.4f})")
-    delta_rf = summary["pooled_f1"] - RANDOM_FOREST_F1
-    print(f"    {'F1 vs RF paper':<20}{summary['pooled_f1']:.4f}  vs "
-          f"{RANDOM_FOREST_F1:.4f} ({delta_rf:+.4f})")
-    print(f"\n  NOTE: the previous figures come from one 2-participant split of "
-          f"249\n  windows with the phantom -8 s shift applied. These are "
-          f"cross-validated\n  over every participant, which is a harder and "
-          f"more honest test.")
+    if participant_metrics:
+        f1 = np.array([m["f1"] for m in participant_metrics.values()])
+        summary["participant_f1_mean"] = float(f1.mean())
+        summary["participant_f1_std"] = float(f1.std(ddof=0))
+        summary["participant_f1_median"] = float(np.median(f1))
+        summary["participants"] = int(len(f1))
+        worst = sorted(participant_metrics.items(), key=lambda kv: kv[1]["f1"])[:3]
+        print(f"\n  per participant ({len(f1)})")
+        print(f"    F1 mean +- sd        {f1.mean():.4f} +- {f1.std(ddof=0):.4f}"
+              f"   median {np.median(f1):.4f}")
+        print("    lowest               " + ", ".join(
+            f"{p} {m['f1']:.3f}" for p, m in worst))
 
     if extra:
         print()
         for key, value in extra.items():
             print(f"  {key}: {value}")
     return summary
+
+
+# --------------------------------------------------------------------------- #
+# per participant, and paired comparison between two runs
+# --------------------------------------------------------------------------- #
+def per_participant(y_true: np.ndarray, y_probability: np.ndarray,
+                    participants: np.ndarray, threshold: float
+                    ) -> Dict[str, Dict[str, float]]:
+    """metrics() for each participant separately, at one threshold."""
+    participants = np.asarray(participants)
+    return {str(p): metrics(np.asarray(y_true)[participants == p],
+                            np.asarray(y_probability)[participants == p],
+                            threshold)
+            for p in np.unique(participants)}
+
+
+def _pooled_f1(runs: Sequence[Dict[str, Dict[str, float]]],
+               keys: Sequence[str]) -> float:
+    counts = {k: sum(runs[p][k] for p in keys) for k in ("tp", "fp", "fn", "tn")}
+    return metrics_from_counts(counts)["f1"]
+
+
+def paired_comparison(reference: Dict[str, Dict[str, float]],
+                      candidate: Dict[str, Dict[str, float]],
+                      n_boot: int = 2000, seed: int = 0) -> Dict[str, float]:
+    """Is `candidate` better than `reference` on the SAME participants?
+
+    Two runs on the same participants are paired: each participant is scored
+    by both, so the question is answered by the per-participant differences,
+    not by comparing two fold means against their spread. This is what makes a
+    difference of a few hundredths testable at n = 20 or more.
+
+    Returns the mean per-participant F1 difference, how many participants
+    improved or got worse, a Wilcoxon signed-rank p-value on those differences,
+    and a bootstrap 95% interval for the difference in POOLED F1, resampling
+    participants (not windows, which are not independent).
+    """
+    shared = sorted(set(reference) & set(candidate))
+    if not shared:
+        raise ValueError("the two runs share no participants")
+    differences = np.array([candidate[p]["f1"] - reference[p]["f1"]
+                            for p in shared])
+
+    nonzero = differences[np.abs(differences) > 1e-12]
+    if len(nonzero) == 0:
+        p_value = 1.0
+    else:
+        from scipy.stats import wilcoxon
+        p_value = float(wilcoxon(nonzero).pvalue)
+
+    rng = np.random.default_rng(seed)
+    boot = np.empty(n_boot)
+    for index in range(n_boot):
+        sample = [shared[i] for i in rng.integers(0, len(shared), len(shared))]
+        boot[index] = (_pooled_f1(candidate, sample)
+                       - _pooled_f1(reference, sample))
+
+    return {
+        "participants": len(shared),
+        "mean_f1_difference": float(differences.mean()),
+        "median_f1_difference": float(np.median(differences)),
+        "improved": int(np.sum(differences > 1e-12)),
+        "worse": int(np.sum(differences < -1e-12)),
+        "unchanged": int(np.sum(np.abs(differences) <= 1e-12)),
+        "wilcoxon_p": p_value,
+        "pooled_f1_difference": _pooled_f1(candidate, shared)
+                                - _pooled_f1(reference, shared),
+        "pooled_f1_difference_ci_low": float(np.percentile(boot, 2.5)),
+        "pooled_f1_difference_ci_high": float(np.percentile(boot, 97.5)),
+    }
