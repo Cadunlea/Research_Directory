@@ -34,36 +34,51 @@ function bullets(slide, items, box) {
 }
 
 // ------------------------------------------------------------------ 1 ----
+// Every quote is verbatim from the PDF, with the page it is on. Wang et al.
+// 2017 (arXiv 1611.06455v4) and Diou et al. 2022 (arXiv 2206.02784v1).
 {
   const s = pres.addSlide();
   title(s, "How the Literature Shaped the Model");
   table(s, [
-    ["Model component", "What it does", "Grounded in"],
-    ["Time-series input, no FFT", "Keeps when chewing and bites happen, not just which rhythms are present", "Hannun et al. 2019 (raw ECG CNN); Ghosh & Sazonov 2022 (raw AIM-2 signals)"],
-    ["Channel attention (squeeze-excite)", "Weighs optical against accelerometer in every window", "Hu et al. 2018"],
-    ["Attention pooling over time", "Lets a 1-2 s bite dominate an 8 s window instead of being averaged away", "Ilse et al. 2018"],
-    ["Auxiliary chew-count head", "Extra supervision from the chew labels; discarded after training", "Caruana 1997 (multi-task learning)"],
-    ["Participant-level validation", "Tests only on people the model has never seen", "Saeb et al. 2017; Doulah et al. 2021"],
-    ["Transformer: tested, not assumed", "Promising but data-hungry and prone to false positives on sensor data", "Vedovelli et al. 2026; Ikram et al. 2025"],
-  ], { x: 0.5, y: 1.1, w: 9, colW: [2.3, 3.7, 3.0], leftHeader: false });
+    ["Model component", "Published statement", "Source"],
+    ["Raw time-series input, no FFT or hand-crafted features",
+     "\u201cOur proposed baseline models are pure end-to-end without any heavy preprocessing on the raw data or feature crafting.\u201d",
+     "Wang et al. 2017, p. 1"],
+    ["Raw input for eating detection",
+     "\u201cprocesses the raw inertial data (not using hand-engineered features)\u201d; this end-to-end approach \u201coutperforms all other methods\u201d",
+     "Diou et al. 2022, pp. 4\u20135"],
+    ["Per-window z-score normalisation",
+     "\u201cThe only preprocessing in our experiment is z-normalization\u201d",
+     "Wang et al. 2017, p. 3"],
+    ["Conv + batch norm + ReLU blocks",
+     "\u201cThe basic block is a convolutional layer followed by a batch normalization layer [...] and a ReLU activation layer.\u201d",
+     "Wang et al. 2017, p. 2"],
+    ["Accelerometer alongside optical, weighted by channel attention",
+     "\u201cwalking rhythm is similar to chewing (i.e. 1 to 3 Hz) [...] causing the classification models to yield high false-positive detections\u201d",
+     "Diou et al. 2022, p. 8"],
+    ["Leave-one-subject-out validation",
+     "\u201cEvaluation is performed in a leave-one-subject-out (LOSO) fashion\u201d",
+     "Diou et al. 2022, p. 5"],
+    ["Threshold chosen for the use case (false alarms)",
+     "\u201callows the user to tune the detection system towards higher recall or precision, or a balanced mode, based on the needs of each use-case\u201d",
+     "Diou et al. 2022, p. 8"],
+  ], { x: 0.5, y: 1.0, w: 9, colW: [2.35, 4.75, 1.9], leftHeader: true });
   s.addNotes(
-    "Every design choice has a published reason. The one that matters most is the input: the " +
-    "ECG literature (Hannun 2019) and Ghosh & Sazonov 2022 on AIM-2 both feed raw signals to a CNN " +
-    "instead of hand-picked features. The two attention pieces are standard, cheap mechanisms " +
-    "(squeeze-and-excitation from Hu 2018, attention pooling from Ilse 2018). Transformers are " +
-    "the next experiment, but Vedovelli 2026 found a Transformer on smartwatch eating data had " +
-    "specificity of only 0.50, i.e. lots of false positives, so I'm testing it rather than assuming it helps.\n\n" +
-    "PAPER CHEAT SHEET (one line each):\n" +
-    "Doulah 2021 - introduced AIM-2; handcrafted features + SVM; F1 0.818 leave-one-out on 30 people.\n" +
-    "Ghosh & Sazonov 2022 - compared 5 deep nets on raw AIM-2 signals; ResNet best at 93.5% balanced accuracy.\n" +
-    "Ghosh 2024 - turned accelerometer into a wavelet image and fused it with food photos; fusion cut false positives.\n" +
-    "Kyritsis 2021 - CNN + LSTM on raw smartwatch data for bites; F1 0.923.\n" +
-    "Diou 2022 - overview from the Thessaloniki group; CNN on raw earbud audio for chewing; self-supervised learning works with few labels.\n" +
-    "Stankoski 2021 - picked hard negative examples on purpose to reduce false positives.\n" +
-    "Wang 2024 - temporal CNN + self-attention on wrist IMU, 61 people, measures eating speed.\n" +
-    "Vedovelli 2026 - Transformer on smartwatch: good sensitivity (0.69), poor specificity (0.50).\n" +
-    "Hannun 2019 - 34-layer CNN on raw ECG beat cardiologists (F1 0.837 vs 0.780).\n" +
-    "Ikram 2025 - Transformer on ECG, 97% accuracy, but split by beats not patients, so it's optimistic.");
+    "Every row is a direct quote, with its page. Wang, Yan & Oates 2017 is the standard reference for " +
+    "classifying time series with convolutional networks straight from the raw signal: their FCN is " +
+    "three conv + batch-norm + ReLU blocks, and z-normalisation is their only preprocessing, which is " +
+    "exactly our trunk and our normalisation. They compare against COTE, an ensemble built on features " +
+    "from both the time and frequency domains, and match or beat it from raw data. Diou et al. 2022 is " +
+    "the Thessaloniki group's review of their intake-monitoring work: the end-to-end model on raw " +
+    "smartwatch data beat every hand-engineered method, everything is evaluated leave-one-subject-out, " +
+    "and they report that walking at 1-3 Hz looks like chewing and causes false positives. That is the " +
+    "argument for keeping the accelerometer next to the optical sensor, and for choosing the threshold " +
+    "for the use case.\n\n" +
+    "Important: neither paper compares time series against an FFT on the same model. That comparison " +
+    "is our own result (next slides): F1 0.858 vs 0.796, false alarms 81 -> 32 per hour.\n\n" +
+    "Still to quote from the primary papers (need the PDFs): squeeze-and-excitation (Hu et al. 2018), " +
+    "attention pooling (Ilse et al. 2018), the auxiliary chew head (Caruana 1997), and subject-wise " +
+    "versus record-wise validation (Saeb et al. 2017).");
 }
 
 // ------------------------------------------------------------------ 2 ----
