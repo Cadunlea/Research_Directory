@@ -326,7 +326,8 @@ def _heads(inputs, shared, chew_weight: float, name: str):
     if chew_weight <= 0:
         model = tf.keras.Model(inputs, food, name=name)
         model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
-                      loss="binary_crossentropy", metrics=["accuracy"])
+                      loss="binary_crossentropy",
+                      metrics=["accuracy", tf.keras.metrics.AUC(name="auc")])
         return model
 
     # Chews per window, scaled in ets_train. softplus keeps it non-negative.
@@ -341,7 +342,7 @@ def _heads(inputs, shared, chew_weight: float, name: str):
         optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
         loss={"food": "binary_crossentropy", "chews": "mse"},
         loss_weights={"food": 1.0, "chews": float(chew_weight)},
-        metrics={"food": ["accuracy"]})
+        metrics={"food": ["accuracy", tf.keras.metrics.AUC(name="auc")]})
     return model
 
 
@@ -386,6 +387,10 @@ def run_tag(config) -> str:
     parts.append(f"seed{config.seed}")
     if config.repeats > 1:
         parts.append(f"x{config.repeats}")
+    if config.monitor != "loss":
+        parts.append(f"stop{config.monitor}")
+    if config.inner_participants != 2:
+        parts.append(f"inner{config.inner_participants}")
     return "_".join(parts)
 
 
@@ -437,7 +442,7 @@ def run(config) -> Dict:
             seed=seed, epochs=config.epochs, batch_size=BATCH_SIZE,
             patience=config.patience, auxiliary=auxiliary,
             smoothing_kernel=config.smoothing, n_models=config.ensemble,
-            verbose=True)
+            monitor=config.monitor, verbose=True)
 
         participants = ets_train.participant_records(results)
         title = f"{tag}" + (f"  (seed {seed})" if config.repeats > 1 else "")
@@ -522,7 +527,7 @@ CONFIG_KEYS = ("architecture", "input", "window_seconds", "sample_rate",
                "context_seconds", "overlap", "channel_attention", "pooling",
                "transformer_layers", "transformer_heads", "chew_weight",
                "smoothing", "ensemble", "folds", "inner_participants",
-               "seed", "repeats", "epochs", "patience")
+               "seed", "repeats", "epochs", "patience", "monitor")
 
 
 # --------------------------------------------------------------------------- #
@@ -568,6 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--seed", type=int, default=9)
     g.add_argument("--epochs", type=int, default=MAX_EPOCHS)
     g.add_argument("--patience", type=int, default=PATIENCE)
+    g.add_argument("--monitor", choices=("loss", "auc"), default="loss",
+                   help="what early stopping watches on the validation "
+                        "participants: total loss, or ROC AUC of the eating "
+                        "output (threshold-free)")
     g.add_argument("--smoothing", type=int, default=1,
                    help="median filter width in windows; 1 = off (default). "
                         "Measured harmful at 8 s")

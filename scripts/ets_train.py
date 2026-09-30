@@ -107,6 +107,7 @@ class FoldResult:
     participant_metrics: Dict[str, Dict[str, float]] = field(default_factory=dict)
     inner_participants: List[str] = field(default_factory=list)
     epochs: int = 0
+    best_epoch: int = 0
     seconds: float = 0.0
 
 
@@ -170,6 +171,7 @@ def choose_inner_participants(train_participants: Sequence[str], count: int,
 def fold_records(results: Sequence["FoldResult"]) -> List[Dict]:
     return [{"fold": r.fold, "held_out": r.held_out, "threshold": r.threshold,
              "inner_participants": r.inner_participants, "epochs": r.epochs,
+             "best_epoch": r.best_epoch,
              "seconds": round(r.seconds, 1), "metrics": r.metrics,
              "smoothed_metrics": r.smoothed_metrics} for r in results]
 
@@ -221,6 +223,7 @@ def cross_validate(
         smoothing_kernel: int = 3,
         auxiliary: bool = False,
         n_models: int = 1,
+        monitor: str = "loss",
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -250,6 +253,22 @@ def cross_validate(
     # its loss does not dominate the classification loss purely by magnitude.
     chew_scale = float(np.percentile(windows.chews, 99)) or 1.0
     chew_target = (windows.chews / chew_scale).astype(np.float32)
+
+    # What early stopping watches on the inner validation participants.
+    #   loss: total validation loss. With auxiliary training that includes the
+    #         chew-count error, and even alone BCE can RISE while the ranking of
+    #         eating above non-eating keeps improving (the model grows more
+    #         confident on the few windows it gets wrong). On the 61-session
+    #         data, three of five folds kept their epoch-1 weights this way.
+    #   auc:  area under the ROC curve of the eating output - threshold-free,
+    #         and exactly what the threshold chosen next depends on.
+    if monitor == "auc":
+        monitor_key = "val_food_auc" if auxiliary else "val_auc"
+        monitor_mode = "max"
+    elif monitor == "loss":
+        monitor_key, monitor_mode = "val_loss", "min"
+    else:
+        raise ValueError(f"unknown monitor {monitor!r}")
 
     results: List[FoldResult] = []
     pooled_probability = np.full(len(windows), np.nan, dtype=np.float64)
@@ -308,10 +327,10 @@ def cross_validate(
             history stop the second before it had trained."""
             return [
                 tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=patience,
+                    monitor=monitor_key, mode=monitor_mode, patience=patience,
                     restore_best_weights=True, verbose=0),
                 tf.keras.callbacks.ReduceLROnPlateau(
-                    monitor="val_loss", factor=0.5,
+                    monitor=monitor_key, mode=monitor_mode, factor=0.5,
                     patience=max(3, patience // 3), min_lr=1e-5, verbose=0),
             ]
 
@@ -396,6 +415,9 @@ def cross_validate(
                                             smoothed_threshold)
 
         epochs_run = len(history.history["loss"])
+        monitored = history.history.get(monitor_key, [])
+        best_epoch = (int(np.argmax(monitored) if monitor_mode == "max"
+                          else np.argmin(monitored)) + 1) if monitored else epochs_run
         results.append(FoldResult(
             fold=index + 1, held_out=[str(p) for p in held_out],
             threshold=threshold,
@@ -407,7 +429,8 @@ def cross_validate(
                 windows.y[test_rows], test_probability,
                 windows.participants[test_rows], threshold),
             inner_participants=[str(p) for p in inner_held],
-            epochs=epochs_run, seconds=time.time() - fold_started))
+            epochs=epochs_run, best_epoch=best_epoch,
+            seconds=time.time() - fold_started))
 
         if verbose:
             members = f" x{len(models)}" if len(models) > 1 else ""
@@ -419,7 +442,7 @@ def cross_validate(
                   f"{', '.join(map(str, held_out)):<22} "
                   f"n={len(test_rows):>5,}  F1 {fold_metrics['f1']:.3f} "
                   f"{smoothed_note}acc {fold_metrics['accuracy']:.3f}  "
-                  f"thr {threshold:.2f}  {epochs_run} ep  "
+                  f"thr {threshold:.2f}  best ep {best_epoch}/{epochs_run}  "
                   f"{time.time() - fold_started:.0f}s  "
                   f"(~{remaining / 60:.0f} min left)", flush=True)
 

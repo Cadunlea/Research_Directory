@@ -1,7 +1,7 @@
 \section{Proposed study design}
 \label{sec:plan}
 
-The literature in Section~\ref{sec:review} points to one gap more than any
+The literature review points to one gap more than any
 other: food-intake detectors from wearable chewing sensors are usually
 reported as a single architecture with a single number, and the design
 decisions behind them are rarely isolated. The ablation in
@@ -15,10 +15,10 @@ sensor, measured one at a time under leave-one-subject-out validation.
 \begin{table}[H]
 \centering
 \caption{Preliminary ablation: the model with one component removed or
-added. 20 annotated sessions, participant-level 4-fold cross-validation,
-same folds for every row. Fold-to-fold spread in F1 is about 0.048, so
-effects smaller than that are not distinguishable from noise. To be repeated
-under leave-one-subject-out on the enlarged dataset.}
+added. The first 20 annotated sessions, participant-level 4-fold
+cross-validation, same folds for every row. Fold-to-fold spread in F1 was
+about 0.048, so effects smaller than that are not distinguishable from
+noise. To be repeated on all 61 sessions.}
 \label{tab:ablation}
 \begin{tabular}{@{}lrrrl@{}}
 \toprule
@@ -39,11 +39,12 @@ Add 8\,s context each side, no marker  & 0.775 & −0.080 & 0.683 & Hurts \\
 \subsection{Protocol, fixed for every experiment}
 
 \begin{itemize}
-  \item \textbf{Leave-one-subject-out validation} on all annotated
-        participants, following \citet{saeb2017need}. With 20 to 61
-        sessions this is computationally feasible, and it is the closest
-        approximation of the use case: a participant the model has never
-        seen.
+  \item \textbf{Leave-one-subject-out validation} on all 43 participants
+        (43 folds, each holding out every session of one participant),
+        following \citet{saeb2017need}. At about a minute per fold this is
+        computationally feasible, and it is the closest approximation of
+        the use case: a participant the model has never seen. Five-fold
+        runs are used only to explore.
   \item \textbf{Paired comparison per participant.} Each variant is scored
         on the same held-out participants as the reference model, so the
         difference can be tested per participant (Wilcoxon signed-rank)
@@ -62,7 +63,7 @@ Add 8\,s context each side, no marker  & 0.775 & −0.080 & 0.683 & Hurts \\
                                >{\raggedright\arraybackslash}X
                                >{\raggedright\arraybackslash}p{26mm}@{}}
 \caption{Planned experiments. Each changes one dimension of the model in
-Table~\ref{tab:model} and holds everything else fixed.}
+the model and holds everything else fixed.}
 \label{tab:plan}\\
 \toprule
 \rowcolor{black!8}
@@ -123,8 +124,8 @@ will ask for, and it replaces comparisons with the lab's earlier model. The
 representation, sampling-rate and window rows are cheap and answer the
 questions raised at the 9/23 lab meeting directly. The Transformer row is the one most likely to be
 asked about by reviewers, and the one most at risk of overfitting on a
-dataset this size; it should be run only after the dataset has been
-enlarged to 61 sessions, and reported whether it helps or not. Negative
+dataset this size; with 24 hours of annotated data it is now worth running, and
+should be reported whether it helps or not. Negative
 data is expected to have the largest practical effect, since false
 positives are the model's main weakness, and is the natural joint
 experiment with the lab.

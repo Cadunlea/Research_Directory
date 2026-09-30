@@ -128,10 +128,9 @@ false-positive problem in its clearest form.
 
 Despite their promise, Transformers carry many more parameters than the
 attention layers above, and whether they help at a given data size is an
-empirical question rather than a given. With 20 annotated sessions (7.8\,h),
-this work uses the two light attention mechanisms and treats a Transformer
-over the convolutional features as an experiment to run once the annotated
-data has grown (Section~\ref{sec:plan}).
+empirical question rather than a given. This work therefore uses the two
+light attention mechanisms by default and tests a Transformer over the
+convolutional features as a separate experiment, on the same folds.
 
 \subsection{Supervision, augmentation and negative data}
 
@@ -164,14 +163,13 @@ here for the same reason.
         attention pooling and an auxiliary chew-count head, reading raw
         AIM-2 optical and accelerometer signals directly from the ETS
         database, evaluated leave-one-subject-out.
-  \item A controlled ablation showing that the input representation
-        accounts for most of the performance: replacing the time series
-        with an FFT magnitude spectrum costs 0.087 F1 and 0.180 precision,
-        while the attention and auxiliary components are within noise at
-        the current data size.
-  \item Two documented negative results with a mechanism: temporal median
-        smoothing and un-marked context windows both lower F1, because
-        meals at 8\,s resolution are punctuated rather than contiguous.
+  \item A controlled ablation of each design decision, one at a time on
+        identical participant-level folds, separating the components that
+        carry the performance from those that do not.
+  \item Negative results reported with their mechanism: temporal median
+        smoothing and context windows without a target marker both lower
+        F1, because meals at 8\,s resolution are punctuated rather than
+        contiguous.
   \item A measured check of sensor-annotation alignment on every session,
         replacing an assumed correction with a verified one.
 \end{itemize}

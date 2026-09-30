@@ -13,6 +13,19 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 1/10/26 (later) — first results on all 61 sessions
+
+61 sessions, 43 participants (18 have two sessions), 24.2 h annotated, 9.6 h
+eating. LOSO = 43 folds. 5-fold default model: pooled F1 0.858, accuracy
+0.891, balanced accuracy 0.881, precision 0.884, recall 0.834, 32 false
+alarms/h; per-participant F1 0.835 +- 0.136. Worst: AIM132097 (0.18).
+
+Early stopping on val_loss kept the EPOCH-1 weights in three of five folds.
+`--monitor auc` (early stopping on validation ROC AUC) and
+`--inner-participants N` were added to test the fix. Each fold line now prints
+`best ep X/Y`. The study design moved out of the review into
+`docs/literature_review/study_plan.pdf`.
+
 ## UPDATE 1/10/26 — the clean scripts folder
 
 All current code is in `scripts/` (copy it to
