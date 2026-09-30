@@ -61,6 +61,10 @@ def metrics(y_true: np.ndarray, y_probability: np.ndarray,
         "precision": precision,
         "recall": recall,
         "specificity": specificity,
+        # F-beta with beta = 0.5 weights precision twice as heavily as
+        # recall: the objective when a false alarm costs more than a miss.
+        "f0.5": (1.25 * precision * recall / (0.25 * precision + recall)
+                 if (precision + recall) else 0.0),
         "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "n": int(total),
         "positive_rate": float(np.mean(y_true == 1)),
@@ -97,10 +101,45 @@ def choose_threshold(y_true: np.ndarray, y_probability: np.ndarray,
     which removes a participant from the fit set; the difference is well inside
     the +-0.046 fold-to-fold spread either way.
     """
+    if objective == "false-alarms":
+        raise ValueError("use choose_threshold_for_false_alarms")
     scores = np.array([metrics(y_true, y_probability, t)[objective]
                        for t in THRESHOLD_GRID])
     plateau = THRESHOLD_GRID[scores >= scores.max() - tolerance]
     return float(np.median(plateau))
+
+
+def choose_threshold_for_false_alarms(y_true: np.ndarray,
+                                      y_probability: np.ndarray,
+                                      max_per_hour: float,
+                                      window_seconds: float) -> float:
+    """The LOWEST threshold whose false-alarm rate stays within the budget.
+
+    For free-living use a false alarm costs more than a missed window: every
+    one is a wrong prompt or a wrong meal in the log. So instead of the best
+    F1, this picks the operating point a deployment would: at most
+    `max_per_hour` false alarms per hour of non-eating on the validation
+    participants, and within that budget as much recall as possible (the
+    lowest threshold that meets it). If no threshold meets the budget, the
+    strictest one on the grid is returned.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    negatives = max(int(np.sum(y_true == 0)), 1)
+    hours = negatives * window_seconds / 3600.0
+    for threshold in THRESHOLD_GRID:
+        predicted = np.asarray(y_probability) >= threshold
+        false_alarms = int(np.sum(predicted & (y_true == 0)))
+        if false_alarms / hours <= max_per_hour:
+            return float(threshold)
+    return float(THRESHOLD_GRID[-1])
+
+
+def select_threshold(y_true, y_probability, objective: str,
+                     window_seconds: float, max_false_alarms: float) -> float:
+    if objective == "false-alarms":
+        return choose_threshold_for_false_alarms(
+            y_true, y_probability, max_false_alarms, window_seconds)
+    return choose_threshold(y_true, y_probability, objective)
 
 
 def smooth_predictions(probability: np.ndarray, starts: np.ndarray,

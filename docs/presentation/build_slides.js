@@ -174,6 +174,35 @@ function bullets(slide, items, box) {
     "and I'll only claim them after a paired test across participants.");
 }
 
+// ------------------------------------------------------------------ 5b ---
+{
+  const s = pres.addSlide();
+  title(s, "Reducing False Positives");
+  table(s, [
+    ["Operating point", "How the threshold is chosen"],
+    ["Now: best F1", "Balances false alarms and misses equally"],
+    ["F0.5", "Counts a false alarm twice as costly as a miss"],
+    ["False-alarm budget", "Catches as much eating as possible within N false alarms per hour"],
+  ], { x: 0.5, y: 1.05, w: 4.4, colW: [1.5, 2.9], leftHeader: true });
+  bullets(s, [
+    "Current model: 32 false alarms per hour of non-eating, precision 0.88",
+    "Threshold always chosen on validation participants, never the test person",
+    "No retraining needed to see the trade-off: the curve comes from saved predictions",
+  ], { x: 0.5, y: 2.75, w: 4.4, h: 2.4 });
+  s.addShape(pres.shapes.RECTANGLE, { x: 5.2, y: 1.05, w: 4.3, h: 4.1,
+    fill: { color: "FFFFFF" }, line: { color: RULE, width: 0.75, dashType: "dash" } });
+  s.addText("Paste figures\\operating_curve.png here", { x: 5.2, y: 2.9, w: 4.3, h: 0.4,
+    fontFace: FONT, fontSize: 11, color: MUTED, align: "center", margin: 0, isTextBox: true });
+  s.addNotes(
+    "False positives are the failure that matters in free living, so the threshold should be set " +
+    "for them. The model outputs a probability; where we draw the line decides the trade-off. Best " +
+    "F1 treats a false alarm and a miss as equally bad. The other two options favour precision: " +
+    "F0.5, or a hard budget of false alarms per hour. The curve shows, for any budget, how much " +
+    "eating we still catch. Next step: train with the budget chosen on validation participants, " +
+    "so the reported number is not tuned on the test set. Negative examples from other ETS " +
+    "studies are the other lever, and they attack false positives directly.");
+}
+
 // ------------------------------------------------------------------ 6 ----
 {
   const s = pres.addSlide();

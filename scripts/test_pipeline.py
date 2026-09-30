@@ -394,6 +394,32 @@ def test_a_consistent_improvement_is_detected():
 # --------------------------------------------------------------------------- #
 # sampling rate and run naming
 # --------------------------------------------------------------------------- #
+def test_false_alarm_budget_is_met_on_the_data_it_was_chosen_on():
+    """The threshold chosen for a budget must actually meet it, and a tighter
+    budget must never give a lower (more permissive) threshold."""
+    rng = np.random.default_rng(4)
+    y = (rng.random(4000) < 0.4).astype(int)
+    probability = np.clip(0.35 * y + rng.normal(0.35, 0.18, len(y)), 0, 1)
+    previous = 0.0
+    for budget in (60, 30, 15, 5):
+        threshold = ets_eval.choose_threshold_for_false_alarms(
+            y, probability, budget, 8.0)
+        result = ets_eval.metrics(y, probability, threshold)
+        rate = ets_eval.false_alarms_per_hour(result["fp"], result["tn"], 8.0)
+        assert rate <= budget + 1e-9, (budget, rate)
+        assert threshold >= previous, "a tighter budget loosened the threshold"
+        previous = threshold
+
+
+def test_f_half_weights_precision_over_recall():
+    y = np.array([1] * 10 + [0] * 10)
+    cautious = np.array([0.9] * 5 + [0.1] * 5 + [0.1] * 10)   # precise, misses half
+    eager = np.array([0.9] * 10 + [0.9] * 5 + [0.1] * 5)      # finds all, 5 false alarms
+    a = ets_eval.metrics(y, cautious, 0.5)
+    b = ets_eval.metrics(y, eager, 0.5)
+    assert a["f0.5"] > b["f0.5"] and a["f1"] < b["f1"]
+
+
 def test_downsampling_keeps_duration_and_the_chewing_rhythm():
     """32 Hz must mean 8 s is 256 samples, and a 1.4 Hz chewing rhythm must
     still be the dominant frequency afterwards - aliasing would move it."""
@@ -433,7 +459,10 @@ def test_every_configuration_gets_its_own_results_file():
                 ["--folds", "5"], ["--seed", "10"], ["--repeats", "3"],
                 ["--ensemble", "3"], ["--smoothing", "3"],
                 ["--monitor", "auc"], ["--inner-participants", "5"],
-                ["--augment"], ["--learning-rate", "0.0003"]]
+                ["--augment"], ["--learning-rate", "0.0003"],
+                ["--threshold-objective", "f0.5"],
+                ["--threshold-objective", "false-alarms"],
+                ["--threshold-objective", "false-alarms", "--max-false-alarms", "10"]]
     tags = [t.run_tag(t.normalise_config(parser.parse_args(v))) for v in variants]
     assert len(set(tags)) == len(tags), sorted(tags)
 

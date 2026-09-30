@@ -445,6 +445,10 @@ def run_tag(config) -> str:
         parts.append(f"stop{config.monitor}")
     if config.augment:
         parts.append("aug")
+    if config.threshold_objective == "false-alarms":
+        parts.append(f"fa{config.max_false_alarms:g}")
+    elif config.threshold_objective != "f1":
+        parts.append(f"thr{config.threshold_objective}")
     if abs(config.learning_rate - LEARNING_RATE) > 1e-12:
         parts.append(f"lr{config.learning_rate:g}")
     if config.inner_participants != 2:
@@ -500,7 +504,9 @@ def run(config) -> Dict:
             seed=seed, epochs=config.epochs, batch_size=BATCH_SIZE,
             patience=config.patience, auxiliary=auxiliary,
             smoothing_kernel=config.smoothing, n_models=config.ensemble,
-            monitor=config.monitor, verbose=True)
+            monitor=config.monitor,
+            threshold_objective=config.threshold_objective,
+            max_false_alarms=config.max_false_alarms, verbose=True)
 
         participants = ets_train.participant_records(results)
         title = f"{tag}" + (f"  (seed {seed})" if config.repeats > 1 else "")
@@ -586,7 +592,8 @@ CONFIG_KEYS = ("architecture", "input", "window_seconds", "sample_rate",
                "transformer_layers", "transformer_heads", "chew_weight",
                "smoothing", "ensemble", "folds", "inner_participants",
                "seed", "repeats", "epochs", "patience", "monitor",
-               "augment", "learning_rate")
+               "augment", "learning_rate", "threshold_objective",
+               "max_false_alarms")
 
 
 # --------------------------------------------------------------------------- #
@@ -648,6 +655,17 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--threads", type=int, default=0,
                    help="CPU threads for TensorFlow (0 = all). Set e.g. 4 to "
                         "run four experiments side by side")
+
+    g = parser.add_argument_group("operating point")
+    g.add_argument("--threshold-objective", choices=("f1", "f0.5", "false-alarms"),
+                   default="f1",
+                   help="how the decision threshold is chosen on the validation "
+                        "participants: best F1 (default); best F0.5, which "
+                        "weights precision twice as much as recall; or the "
+                        "most recall within a false-alarm budget")
+    g.add_argument("--max-false-alarms", type=float, default=15.0,
+                   help="false alarms per hour of non-eating allowed with "
+                        "--threshold-objective false-alarms (default 15)")
 
     g = parser.add_argument_group("validation")
     ets_train.add_cv_arguments(g)

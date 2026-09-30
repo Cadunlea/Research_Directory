@@ -11,6 +11,7 @@ literature behind every design choice are in
 |---|---|
 | `train_food_intake.py` | The model, and every experiment for the paper as a flag (table below) |
 | `compare_runs.py` | One table of every run, each paired against a reference: F1 change with 95% interval, participants better/worse, Wilcoxon p. Writes `results_summary.csv` |
+| `operating_curve.py` | False alarms per hour against recall for finished runs, from their saved predictions; no retraining |
 | `plot_results.py` | Grayscale Arial-11 figures: per-participant F1, prediction timelines, run comparison |
 | `ets_data.py` | Database → training windows. The only place the data model lives |
 | `ets_eval.py` | Metrics, threshold selection, smoothing, per-participant and paired statistics |
@@ -59,6 +60,8 @@ holds everything else fixed.
 | `--monitor auc` | `loss` | Early stopping on validation ROC AUC instead of loss | Is early stopping keeping the right epoch? |
 | `--learning-rate X` | `0.001` | Adam learning rate; lower spreads learning over more epochs | Does the model peak too early to be tuned? |
 | `--augment` | off | Random per-channel amplitude scaling and Gaussian noise, training only | Does stopping person-specific shortcuts help new people? |
+| `--threshold-objective f0.5` | `f1` | Threshold chosen for F0.5 (precision weighted twice recall) | Fewer false positives at a small recall cost |
+| `--threshold-objective false-alarms --max-false-alarms N` | 15 | Most recall within N false alarms per hour of non-eating, chosen on validation participants | The operating point a deployment needs |
 | `--epochs N`, `--patience N` | `80`, `12` | Training length, early stopping | |
 | `--threads N` | all cores | CPU threads for this run; use 4 to run four runs side by side | |
 | `--tag NAME` | | Prefix for the results file name | |

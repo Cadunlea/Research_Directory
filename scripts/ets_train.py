@@ -224,6 +224,8 @@ def cross_validate(
         auxiliary: bool = False,
         n_models: int = 1,
         monitor: str = "loss",
+        threshold_objective: str = "f1",
+        max_false_alarms: float = 15.0,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -380,8 +382,9 @@ def cross_validate(
         # overlapping-hop model more than the FFT baseline, which trains on a
         # hop equal to its window and so was not affected at all.
         validation_probability = predict(validation_rows)
-        threshold = ets_eval.choose_threshold(
-            windows.y[validation_rows], validation_probability, "f1")
+        threshold = ets_eval.select_threshold(
+            windows.y[validation_rows], validation_probability,
+            threshold_objective, windows.window_seconds, max_false_alarms)
 
         # Smoothing is different: the median filter walks along consecutive
         # windows, so its threshold MUST be estimated at the same spacing the
@@ -399,8 +402,9 @@ def cross_validate(
             windows.participants[validation_eval_rows],
             windows.window_seconds, windows.window_seconds,
             kernel=smoothing_kernel)
-        smoothed_threshold = ets_eval.choose_threshold(
-            windows.y[validation_eval_rows], smoothed_validation, "f1")
+        smoothed_threshold = ets_eval.select_threshold(
+            windows.y[validation_eval_rows], smoothed_validation,
+            threshold_objective, windows.window_seconds, max_false_alarms)
 
         test_probability = predict(test_rows)
         pooled_probability[test_rows] = test_probability
