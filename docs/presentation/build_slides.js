@@ -34,51 +34,41 @@ function bullets(slide, items, box) {
 }
 
 // ------------------------------------------------------------------ 1 ----
-// Every quote is verbatim from the PDF, with the page it is on. Wang et al.
-// 2017 (arXiv 1611.06455v4) and Diou et al. 2022 (arXiv 2206.02784v1).
+// Evidence drawn only from the ten papers on the literature slides. Where a
+// component is this project's own addition, the slide says so.
 {
   const s = pres.addSlide();
   title(s, "How the Literature Shaped the Model");
   table(s, [
-    ["Model component", "Published statement", "Source"],
-    ["Raw time-series input, no FFT or hand-crafted features",
-     "\u201cOur proposed baseline models are pure end-to-end without any heavy preprocessing on the raw data or feature crafting.\u201d",
-     "Wang et al. 2017, p. 1"],
-    ["Raw input for eating detection",
-     "\u201cprocesses the raw inertial data (not using hand-engineered features)\u201d; this end-to-end approach \u201coutperforms all other methods\u201d",
-     "Diou et al. 2022, pp. 4\u20135"],
-    ["Per-window z-score normalisation",
-     "\u201cThe only preprocessing in our experiment is z-normalization\u201d",
-     "Wang et al. 2017, p. 3"],
-    ["Conv + batch norm + ReLU blocks",
-     "\u201cThe basic block is a convolutional layer followed by a batch normalization layer [...] and a ReLU activation layer.\u201d",
-     "Wang et al. 2017, p. 2"],
-    ["Accelerometer alongside optical, weighted by channel attention",
-     "\u201cwalking rhythm is similar to chewing (i.e. 1 to 3 Hz) [...] causing the classification models to yield high false-positive detections\u201d",
-     "Diou et al. 2022, p. 8"],
-    ["Leave-one-subject-out validation",
-     "\u201cEvaluation is performed in a leave-one-subject-out (LOSO) fashion\u201d",
-     "Diou et al. 2022, p. 5"],
-    ["Threshold chosen for the use case (false alarms)",
-     "\u201callows the user to tune the detection system towards higher recall or precision, or a balanced mode, based on the needs of each use-case\u201d",
-     "Diou et al. 2022, p. 8"],
-  ], { x: 0.5, y: 1.0, w: 9, colW: [2.35, 4.75, 1.9], leftHeader: true });
+    ["Model component", "What the reviewed papers found", "Papers"],
+    ["Learned features from the normalised time series, not hand-crafted features",
+     "Deep nets on AIM-2 optical + accelerometer signals reached 93.5% balanced accuracy; end-to-end learning on raw IMU beat hand-engineered methods (bite F1 0.923)",
+     "Ghosh & Sazonov 2022; Kyritsis et al. 2021; Doulah et al. 2021"],
+    ["Optical and accelerometer together, weighted per window (channel attention)",
+     "Walking at 1\u20133 Hz looks like chewing and causes false positives; motion signals are needed to reject it",
+     "Diou et al. 2022; Doulah et al. 2021"],
+    ["Light attention on a CNN, Transformer tested as an option",
+     "CNN + self-attention works on 61 people; a Transformer had specificity of only 0.50; Transformer ECG results used beat-level splits",
+     "Wang et al. 2024; Vedovelli et al. 2026; Ikram et al. 2025"],
+    ["Participant-level (leave-one-out) validation",
+     "AIM-2, smartwatch bite and Transformer eating studies all test on held-out people; the 97% ECG result did not split by patient",
+     "Doulah et al. 2021; Kyritsis et al. 2021; Vedovelli et al. 2026; Ikram et al. 2025"],
+    ["Operating point and negatives aimed at false positives",
+     "Hard negative examples and sensor-image fusion both reduced false positives",
+     "Stankoski et al. 2021; Ghosh et al. 2024"],
+    ["Chew-count head; time series vs FFT",
+     "Our additions: few labels motivate extra supervision; the FFT comparison is our own result (F1 0.858 vs 0.796)",
+     "This work (motivated by Diou et al. 2022)"],
+  ], { x: 0.5, y: 1.0, w: 9, colW: [2.6, 4.2, 2.2], leftHeader: true });
   s.addNotes(
-    "Every row is a direct quote, with its page. Wang, Yan & Oates 2017 is the standard reference for " +
-    "classifying time series with convolutional networks straight from the raw signal: their FCN is " +
-    "three conv + batch-norm + ReLU blocks, and z-normalisation is their only preprocessing, which is " +
-    "exactly our trunk and our normalisation. They compare against COTE, an ensemble built on features " +
-    "from both the time and frequency domains, and match or beat it from raw data. Diou et al. 2022 is " +
-    "the Thessaloniki group's review of their intake-monitoring work: the end-to-end model on raw " +
-    "smartwatch data beat every hand-engineered method, everything is evaluated leave-one-subject-out, " +
-    "and they report that walking at 1-3 Hz looks like chewing and causes false positives. That is the " +
-    "argument for keeping the accelerometer next to the optical sensor, and for choosing the threshold " +
-    "for the use case.\n\n" +
-    "Important: neither paper compares time series against an FFT on the same model. That comparison " +
-    "is our own result (next slides): F1 0.858 vs 0.796, false alarms 81 -> 32 per hour.\n\n" +
-    "Still to quote from the primary papers (need the PDFs): squeeze-and-excitation (Hu et al. 2018), " +
-    "attention pooling (Ilse et al. 2018), the auxiliary chew head (Caruana 1997), and subject-wise " +
-    "versus record-wise validation (Saeb et al. 2017).");
+    "Everything here comes from the papers on the previous two slides. Ghosh & Sazonov ran deep " +
+    "networks directly on AIM-2 signals, the same sensor we use, and Kyritsis showed end-to-end learning " +
+    "beating hand-engineered features. Diou's review is the reason both sensors stay in: walking at 1-3 Hz " +
+    "looks like chewing and causes false positives. On Transformers the evidence is mixed: Wang 2024 made " +
+    "attention work on 61 people, Vedovelli's Transformer had poor specificity, and the 97% ECG result " +
+    "was not split by patient. So I use light attention by default and test a Transformer as an option. " +
+    "Two pieces are ours, and I say so: the chew-count head, and the time-series-versus-FFT comparison, " +
+    "which is our own experimental result.");
 }
 
 // ------------------------------------------------------------------ 2 ----
