@@ -56,6 +56,9 @@ holds everything else fixed.
 | `--inner-participants N` | `2` | Participants held out of training for early stopping and the threshold | |
 | `--inner-selection first/rotate` | rotate under LOSO | Which participants do that job | |
 | `--sweep NAME` | | Every level of one dimension, one results file each: `windows`, `sample-rates`, `chew-weights`, `transformer-layers`, `context` | |
+| `--monitor auc` | `loss` | Early stopping on validation ROC AUC instead of loss | Is early stopping keeping the right epoch? |
+| `--learning-rate X` | `0.001` | Adam learning rate; lower spreads learning over more epochs | Does the model peak too early to be tuned? |
+| `--augment` | off | Random per-channel amplitude scaling and Gaussian noise, training only | Does stopping person-specific shortcuts help new people? |
 | `--epochs N`, `--patience N` | `80`, `12` | Training length, early stopping | |
 | `--threads N` | all cores | CPU threads for this run; use 4 to run four runs side by side | |
 | `--tag NAME` | | Prefix for the results file name | |

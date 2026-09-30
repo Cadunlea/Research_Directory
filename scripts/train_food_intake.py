@@ -187,7 +187,8 @@ def build_attention_cnn(input_shape, config):
     short_kernel = _odd(5 / factor)
 
     inputs = layers.Input(shape=input_shape, name="signal")
-    x = layers.Conv1D(32, long_kernel, strides=2, padding="same")(inputs)
+    x = augment(inputs, config)
+    x = layers.Conv1D(32, long_kernel, strides=2, padding="same")(x)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
     if pool1:
@@ -233,7 +234,7 @@ def build_attention_cnn(input_shape, config):
 
     shared = layers.Dense(64, activation="relu")(pooled)
     shared = layers.Dropout(DROPOUT)(shared)
-    return _heads(inputs, shared, config.chew_weight, "food_intake_cnn")
+    return _heads(inputs, shared, config.chew_weight, "food_intake_cnn", config)
 
 
 def transformer_block(x, heads: int, dropout: float = 0.1):
@@ -282,19 +283,19 @@ def PositionalEmbedding(steps: int, width: int):                   # noqa: N802
 def build_fcn(input_shape, config):
     from tensorflow.keras import layers
     inputs = layers.Input(shape=input_shape, name="signal")
-    x = inputs
+    x = augment(inputs, config)
     for filters, kernel in ((128, 8), (256, 5), (128, 3)):
         x = layers.Conv1D(filters, kernel, padding="same")(x)
         x = layers.BatchNormalization()(x)
         x = layers.ReLU()(x)
     pooled = layers.GlobalAveragePooling1D()(x)
-    return _heads(inputs, pooled, 0.0, "fcn_wang2017")
+    return _heads(inputs, pooled, 0.0, "fcn_wang2017", config)
 
 
 def build_resnet(input_shape, config):
     from tensorflow.keras import layers
     inputs = layers.Input(shape=input_shape, name="signal")
-    x = inputs
+    x = augment(inputs, config)
     for filters in (64, 128, 128):
         shortcut = x
         y = x
@@ -308,14 +309,66 @@ def build_resnet(input_shape, config):
         shortcut = layers.BatchNormalization()(shortcut)
         x = layers.ReLU()(layers.Add()([shortcut, y]))
     pooled = layers.GlobalAveragePooling1D()(x)
-    return _heads(inputs, pooled, 0.0, "resnet_wang2017")
+    return _heads(inputs, pooled, 0.0, "resnet_wang2017", config)
+
+
+# --------------------------------------------------------------------------- #
+# augmentation: active while training, a no-op at validation and test time
+# --------------------------------------------------------------------------- #
+AUGMENT_SCALE = 0.2     # per-window, per-channel amplitude: x (1 + N(0, 0.2))
+AUGMENT_NOISE = 0.1     # additive Gaussian noise, in z-scored units
+
+
+def _channel_scale_class():
+    import tensorflow as tf
+
+    class _RandomChannelScale(tf.keras.layers.Layer):
+        """Multiply each channel of each window by its own random factor.
+
+        After per-window z-scoring, what still differs between people is the
+        RELATIVE strength of the channels - how strongly the optical sensor
+        picks up the temporalis against how much the head moves. Randomising
+        it stops the network keying on one participant's balance of channels,
+        which is the kind of person-specific shortcut that makes validation
+        performance peak after an epoch or two (Um et al. 2017).
+        """
+
+        def __init__(self, stddev: float, **kwargs):
+            super().__init__(**kwargs)
+            self.stddev = stddev
+
+        def call(self, inputs, training=None):
+            if not training:
+                return inputs
+            shape = tf.stack([tf.shape(inputs)[0], 1, tf.shape(inputs)[2]])
+            return inputs * (1.0 + self.stddev * tf.random.normal(shape))
+
+    return _RandomChannelScale
+
+
+def augment(inputs, config):
+    """Training-time augmentation of the sensor channels only.
+
+    The context marker channel, when present, is passed through untouched:
+    it is an instruction to the model, not a measurement.
+    """
+    if not config.augment:
+        return inputs
+    from tensorflow.keras import layers
+    sensors = 4
+    signal = inputs[..., :sensors] if inputs.shape[-1] > sensors else inputs
+    signal = _channel_scale_class()(AUGMENT_SCALE, name="augment_scale")(signal)
+    signal = layers.GaussianNoise(AUGMENT_NOISE, name="augment_noise")(signal)
+    if inputs.shape[-1] > sensors:
+        signal = layers.Concatenate()([signal, inputs[..., sensors:]])
+    return signal
 
 
 ARCHITECTURES = {"attention-cnn": build_attention_cnn, "fcn": build_fcn,
                  "resnet": build_resnet}
 
 
-def _heads(inputs, shared, chew_weight: float, name: str):
+def _heads(inputs, shared, chew_weight: float, name: str, config):
     """Output heads and compilation, shared by every architecture so a
     comparison cannot accidentally differ in how the models are trained."""
     import tensorflow as tf
@@ -325,7 +378,7 @@ def _heads(inputs, shared, chew_weight: float, name: str):
 
     if chew_weight <= 0:
         model = tf.keras.Model(inputs, food, name=name)
-        model.compile(optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
+        model.compile(optimizer=tf.keras.optimizers.Adam(config.learning_rate),
                       loss="binary_crossentropy",
                       metrics=["accuracy", tf.keras.metrics.AUC(name="auc")])
         return model
@@ -339,7 +392,7 @@ def _heads(inputs, shared, chew_weight: float, name: str):
     model = tf.keras.Model(inputs, {"food": food, "chews": chews},
                            name=f"{name}_multitask")
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(LEARNING_RATE),
+        optimizer=tf.keras.optimizers.Adam(config.learning_rate),
         loss={"food": "binary_crossentropy", "chews": "mse"},
         loss_weights={"food": 1.0, "chews": float(chew_weight)},
         metrics={"food": ["accuracy", tf.keras.metrics.AUC(name="auc")]})
@@ -359,6 +412,7 @@ def normalise_config(config):
     if config.input == "fft":
         config.context_seconds = 0.0
         config.transformer_layers = 0
+        config.augment = False          # scaling a spectrum is not the same idea
     return config
 
 
@@ -389,6 +443,10 @@ def run_tag(config) -> str:
         parts.append(f"x{config.repeats}")
     if config.monitor != "loss":
         parts.append(f"stop{config.monitor}")
+    if config.augment:
+        parts.append("aug")
+    if abs(config.learning_rate - LEARNING_RATE) > 1e-12:
+        parts.append(f"lr{config.learning_rate:g}")
     if config.inner_participants != 2:
         parts.append(f"inner{config.inner_participants}")
     return "_".join(parts)
@@ -527,7 +585,8 @@ CONFIG_KEYS = ("architecture", "input", "window_seconds", "sample_rate",
                "context_seconds", "overlap", "channel_attention", "pooling",
                "transformer_layers", "transformer_heads", "chew_weight",
                "smoothing", "ensemble", "folds", "inner_participants",
-               "seed", "repeats", "epochs", "patience", "monitor")
+               "seed", "repeats", "epochs", "patience", "monitor",
+               "augment", "learning_rate")
 
 
 # --------------------------------------------------------------------------- #
@@ -573,6 +632,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--seed", type=int, default=9)
     g.add_argument("--epochs", type=int, default=MAX_EPOCHS)
     g.add_argument("--patience", type=int, default=PATIENCE)
+    g.add_argument("--learning-rate", type=float, default=LEARNING_RATE,
+                   help="Adam learning rate (default 0.001). Lower, e.g. "
+                        "0.0003, spreads learning over more epochs")
+    g.add_argument("--augment", action="store_true",
+                   help="training-time augmentation: random per-channel "
+                        "amplitude scaling and Gaussian noise")
     g.add_argument("--monitor", choices=("loss", "auc"), default="loss",
                    help="what early stopping watches on the validation "
                         "participants: total loss, or ROC AUC of the eating "

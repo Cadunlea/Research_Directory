@@ -432,7 +432,8 @@ def test_every_configuration_gets_its_own_results_file():
                 ["--architecture", "fcn"], ["--architecture", "resnet"],
                 ["--folds", "5"], ["--seed", "10"], ["--repeats", "3"],
                 ["--ensemble", "3"], ["--smoothing", "3"],
-                ["--monitor", "auc"], ["--inner-participants", "5"]]
+                ["--monitor", "auc"], ["--inner-participants", "5"],
+                ["--augment"], ["--learning-rate", "0.0003"]]
     tags = [t.run_tag(t.normalise_config(parser.parse_args(v))) for v in variants]
     assert len(set(tags)) == len(tags), sorted(tags)
 
