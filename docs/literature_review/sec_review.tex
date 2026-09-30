@@ -43,9 +43,11 @@ the two ECG studies whose methods transfer to this problem.}
 \citet{doulah2021aim2} & AIM-2; hand-crafted features, mRMR selection, SVM &
   Food-intake detection with passive food-image capture &
   F1 0.818 (LOSO, 30 participants); camera triggered only during eating \\
-\citet{papapanagiotou2017chewing} & 1D CNN on raw in-ear audio &
-  Chewing detection without hand-crafted features &
-  Accuracy 0.980, F1 0.883 \\
+\citet{diou2022intake} & Review: CNN on in-ear audio windows for chewing,
+  smartwatch IMU for bites &
+  Intake monitoring in free living &
+  CNN F1 0.908 against 0.748 for an SVM; self-supervised learning comparable
+  to supervised \\
 \citet{kyritsis2021endtoend} & CNN + LSTM, end to end on raw wrist IMU &
   Bite and meal detection in the wild &
   Bite F1 0.923 (LOSO) \\
@@ -79,9 +81,16 @@ the two ECG studies whose methods transfer to this problem.}
 \subsection{From hand-crafted features to learned representations}
 
 To address the limits of hand-crafted features, several groups trained
-networks directly on the raw signal. \citet{papapanagiotou2017chewing}
-detected chewing with a 1D convolutional network applied to raw in-ear audio
-windows, and \citet{kyritsis2021endtoend} trained a CNN feature extractor and
+networks directly on the signal. In this literature, a raw input denotes the
+absence of hand-engineered features rather than of preprocessing:
+z-normalisation is the only preprocessing in the convolutional time-series
+baselines of \citet{wang2017strong}, and the end-to-end bite detector reviewed
+by \citet{diou2022intake} receives preprocessed inertial signals.
+\citet{papapanagiotou2017chewing} detected chewing with a 1D convolutional
+network applied to in-ear audio windows; across window lengths of 1 to 5\,s,
+the 5\,s network reached F1 0.908, against 0.748 for a support vector machine
+on hand-crafted features, although such models ``require significantly
+larger volumes of labeled data'' \citep{diou2022intake}. Similarly, \citet{kyritsis2021endtoend} trained a CNN feature extractor and
 an LSTM jointly on raw wrist inertial data, reaching a bite-detection F1 of
 0.923 under leave-one-subject-out evaluation. On AIM-2 itself,
 \citet{ghosh2022comparative} compared five deep architectures on the optical
@@ -99,7 +108,9 @@ share a sampling rate of the same order, a quasi-periodic structure (heart
 beats at about 1\,Hz, chews at 0.94--2.17\,Hz \citep{po2011chewing}) and the
 need to recognise short events inside longer recordings. This motivates the
 first and most important design choice in this work: the model reads the
-time series, not a spectrum. \citet{ghosh2024integrated} took the opposite
+normalised time series, not a spectrum. None of the reviewed studies
+compares the two representations on the same network, so that comparison is
+made directly in this work. \citet{ghosh2024integrated} took the opposite
 route, converting accelerometer signals to a wavelet scalogram image. A
 magnitude spectrum says which rhythms are present in a window but discards
 when they occur, which is the information that separates a bite from
@@ -129,7 +140,7 @@ false-positive problem in its clearest form.
 Despite their promise, Transformers carry many more parameters than the
 attention layers above, and whether they help at a given data size is an
 empirical question rather than a given. This work therefore uses the two
-light attention mechanisms by default and tests a Transformer over the
+light attention mechanisms by default and treats a Transformer over the
 convolutional features as a separate experiment, on the same folds.
 
 \subsection{Supervision, augmentation and negative data}
@@ -138,14 +149,23 @@ Small annotated datasets call for more supervision per example and for more
 examples per recording. Multi-task learning \citep{caruana1997multitask}
 improves generalisation by training a shared representation on related
 tasks; here, counting chews is the related task, since the ground truth
-already contains chew annotations. Augmentation of wearable sensor data
+already contains chew annotations. This auxiliary task is specific to the
+present work. Augmentation of wearable sensor data
 raised accuracy from 77.54\% to 86.88\% in Parkinson's disease monitoring
 \citep{um2017augmentation}; overlapping windows are the simplest form of it.
 Window length itself trades resolution for context, and has a measurable
-effect on recognition \citep{banos2014window}.
+effect on recognition \citep{banos2014window}. For chewing, which ``typically
+is in the range from 1 to 3\,Hz'', a 5\,s window was chosen so that ``even for
+the lowest frequency of 1\,Hz, a window of 5\,s contains at least 5 periods''
+\citep{diou2022intake}; the 8\,s windows used here contain at least eight.
 
 False positives are the persistent weakness of eating detectors: many
-non-eating activities produce jaw and head motion. \citet{stankoski2021smartwatch}
+non-eating activities produce jaw and head motion. Walking in particular has
+a rhythm similar to chewing, 1 to 3\,Hz, and causes chewing classifiers ``to
+yield high false-positive detections'', which accelerometer data can be used
+to remove \citep{diou2022intake}. The same work notes that a detector can be
+tuned ``towards higher recall or precision, or a balanced mode, based on the
+needs of each use-case''. \citet{stankoski2021smartwatch}
 reduced them by deliberately selecting hard negative examples for training,
 and \citet{ghosh2024integrated} by fusing the sensor classifier with food-image
 recognition. Finally, evaluation practice varies widely across the field
@@ -160,9 +180,14 @@ here for the same reason.
 
 \begin{itemize}
   \item A compact convolutional model with channel attention, temporal
-        attention pooling and an auxiliary chew-count head, reading raw
-        AIM-2 optical and accelerometer signals directly from the ETS
-        database, evaluated leave-one-subject-out.
+        attention pooling and an auxiliary chew-count head, reading the
+        normalised AIM-2 optical and accelerometer signals directly from the
+        ETS database: 61 annotated sessions from 43 participants, evaluated
+        at the participant level.
+  \item A direct comparison of time-series and spectral input on the same
+        network, which none of the reviewed studies reports. The time
+        series reaches F1 0.858 against 0.796 and reduces false alarms from
+        81 to 32 per hour of non-eating.
   \item A controlled ablation of each design decision, one at a time on
         identical participant-level folds, separating the components that
         carry the performance from those that do not.

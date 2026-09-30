@@ -2,7 +2,7 @@
 \label{sec:model}
 
 The model is a compact one-dimensional convolutional network that reads the
-raw AIM-2 sensor signals and outputs the probability that an 8\,s window
+normalised AIM-2 sensor signals and outputs the probability that an 8\,s window
 contains eating (Figure~\ref{fig:architecture}). It has four parts. A
 convolutional feature extractor learns its own filters from the time series
 instead of receiving hand-crafted features or a spectrum. A squeeze-and-excitation
