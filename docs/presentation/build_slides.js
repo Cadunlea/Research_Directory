@@ -47,7 +47,7 @@ function bullets(slide, items, box) {
     ["Optical and accelerometer together, weighted per window (channel attention)",
      "Walking at 1\u20133 Hz looks like chewing and causes false positives; motion signals are needed to reject it",
      "Diou et al. 2022; Doulah et al. 2021"],
-    ["Light attention on a CNN, Transformer tested as an option",
+    ["Light attention on a CNN, not a full Transformer",
      "CNN + self-attention works on 61 people; a Transformer had specificity of only 0.50; Transformer ECG results used beat-level splits",
      "Wang et al. 2024; Vedovelli et al. 2026; Ikram et al. 2025"],
     ["Participant-level (leave-one-out) validation",
@@ -66,7 +66,7 @@ function bullets(slide, items, box) {
     "beating hand-engineered features. Diou's review is the reason both sensors stay in: walking at 1-3 Hz " +
     "looks like chewing and causes false positives. On Transformers the evidence is mixed: Wang 2024 made " +
     "attention work on 61 people, Vedovelli's Transformer had poor specificity, and the 97% ECG result " +
-    "was not split by patient. So I use light attention by default and test a Transformer as an option. " +
+    "was not split by patient. So I use light attention on a CNN; a Transformer is built in and will be run on the full dataset. " +
     "Two pieces are ours, and I say so: the chew-count head, and the time-series-versus-FFT comparison, " +
     "which is our own experimental result.");
 }
