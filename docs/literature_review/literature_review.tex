@@ -1,0 +1,45 @@
+% Literature review, model description and study design.
+% Compile with XeLaTeX (Overleaf: Menu > Compiler > XeLaTeX), then BibTeX.
+% Arial 11 pt throughout; Liberation Sans or TeX Gyre Heros are used only if
+% Arial is not installed (both are metric-compatible stand-ins).
+\documentclass[11pt]{article}
+
+\usepackage[letterpaper, margin=2.2cm]{geometry}
+\usepackage{fontspec}
+\IfFontExistsTF{Arial}{\setmainfont{Arial}}{%
+  \IfFontExistsTF{Liberation Sans}{\setmainfont{Liberation Sans}}{%
+    \setmainfont{TeX Gyre Heros}}}
+\usepackage[round, numbers, sort&compress]{natbib}
+\usepackage[table]{xcolor}
+\usepackage{booktabs, array, xltabular}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, calc}
+\usepackage[hidelinks]{hyperref}
+
+% Grayscale only. Captions and table text stay at the body size (11 pt).
+\captionsetup{font=normalsize, labelfont=bf, justification=raggedright,
+              singlelinecheck=false}
+\arrayrulecolor{black!55}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\title{Food-intake detection from AIM-2 sensor signals:\\
+       literature review, model description and study design}
+\author{Caelan Dunlea\\University of Alabama}
+\date{30 September 2026}
+
+\begin{document}
+\maketitle
+
+\input{sec_review}
+\input{sec_model}
+\input{sec_plan}
+
+\bibliographystyle{unsrtnat}
+\bibliography{refs}
+
+\end{document}

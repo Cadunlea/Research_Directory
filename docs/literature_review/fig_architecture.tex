@@ -1,0 +1,52 @@
+% Model architecture, top to bottom. Grayscale only; font inherited from the
+% document (Arial 11). Drawn at final size - never scale it, or the text stops
+% being 11 pt. Used by literature_review.tex and figure_architecture.tex.
+\begin{tikzpicture}[
+    box/.style   = {draw=black!70, fill=black!5, rounded corners=1.5pt,
+                    align=center, inner sep=4pt, text width=78mm, execute at begin node={\hyphenpenalty=10000},
+                    minimum height=12mm},
+    key/.style   = {box, fill=black!17},
+    head/.style  = {box, text width=37mm},
+    flow/.style  = {-{Stealth[length=2mm]}, draw=black!75, line width=0.6pt},
+    dims/.style = {text=black!60, font=\itshape, anchor=west},
+    stage/.style = {text=black!60, anchor=east, align=right, execute at begin node={\hyphenpenalty=10000}},
+    node distance = 4mm,
+  ]
+  \node[box] (in)
+      {\textbf{Input}: 8 s window at 128 Hz, accelerometer X, Y, Z and optical};
+  \node[box, below=of in] (norm)
+      {\textbf{Normalise}: per window and channel, mean removed, z-score over valid samples, gaps → 0};
+  \node[box, below=of norm] (c1)
+      {\textbf{Conv block 1}: 32 filters, kernel 9, stride 2, batch norm, ReLU, max-pool 2};
+  \node[box, below=of c1] (c2)
+      {\textbf{Conv block 2}: 64 filters, kernel 9, stride 2, batch norm, ReLU, max-pool 2};
+  \node[box, below=of c2] (c3)
+      {\textbf{Conv block 3}: 64 filters, kernel 5, batch norm, ReLU};
+  \node[key, below=of c3] (se)
+      {\textbf{Channel attention} (squeeze-excite): global average → 16 → 64, sigmoid gate rescales each feature};
+  \node[key, below=of se] (ap)
+      {\textbf{Attention pooling over time}: one score per step, softmax over 64 steps, weighted sum};
+  \node[box, below=of ap] (fc)
+      {\textbf{Dense}: 64 units, ReLU, dropout 0.3};
+  \node[head, below=7mm of fc.south west, anchor=north west] (food)
+      {\textbf{Eating head}\\sigmoid → p(eating)};
+  \node[head, dashed, fill=white, below=7mm of fc.south east, anchor=north east] (chew)
+      {\textbf{Chew-count head}\\32 → 1, softplus};
+
+  \foreach \a/\b in {in/norm, norm/c1, c1/c2, c2/c3, c3/se, se/ap, ap/fc}
+    \draw[flow] (\a) -- (\b);
+  \draw[flow] (fc.south -| food.north) -- (food.north);
+  \draw[flow, dashed] (fc.south -| chew.north) -- (chew.north);
+
+  % output shapes, right of each block
+  \foreach \n/\s in {in/1024 × 4, norm/1024 × 4, c1/256 × 32, c2/64 × 64,
+                     c3/64 × 64, se/64 × 64, ap/64, fc/64}
+    \node[dims] at ([xshift=3mm]\n.east) {\s};
+  \node[dims, align=left] at ([xshift=3mm]chew.east) {training only,\\loss weight 0.2};
+
+  % stages, left of the column
+  \node[stage] at ([xshift=-3mm]$(in.west)!0.5!(norm.west)$) {Signal};
+  \node[stage] at ([xshift=-3mm]c2.west) {Feature\\extractor};
+  \node[stage] at ([xshift=-3mm]$(se.west)!0.5!(ap.west)$) {Attention};
+  \node[stage] at ([xshift=-3mm]food.west) {Output,\\threshold fit on\\validation\\participants};
+\end{tikzpicture}

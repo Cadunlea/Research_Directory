@@ -1,0 +1,55 @@
+% Complete model description, one row per design decision.
+% Style follows the 9/22 lab-meeting table: #, component, choice, why - plus
+% the literature each decision rests on.
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{5mm}
+                               >{\raggedright\arraybackslash}p{24mm}
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}p{24mm}@{}}
+\caption{Complete description of the food-intake detection model. Every design
+decision, the reason for it, and the literature it is grounded in.}
+\label{tab:model}\\
+\toprule
+\rowcolor{black!8}
+\textbf{\#} & \textbf{Component} & \textbf{Design} & \textbf{Why} & \textbf{Literature} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{black!8}
+\textbf{\#} & \textbf{Component} & \textbf{Design} & \textbf{Why} & \textbf{Literature} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{5}{r@{}}{\textit{continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+\multicolumn{5}{@{}l}{\textit{Data}} \\
+1 & Sensor & AIM-2 eyeglass sensor: 3-axis accelerometer and optical temporalis-muscle sensor, 128\,Hz, stored as 8\,s packets in the ETS database & Chewing moves the temporalis muscle and the head; both channels carry it, with different artefacts. The original AIM-2 used a flex sensor where this one has the optical sensor & \citet{doulah2021aim2, ghosh2022comparative} \\
+2 & Labels & Eating = bout OR bite annotation at 10\,Hz. Window is eating if more than half its annotated samples are eating. Unrecorded time (−1) is dropped, never treated as non-eating & Treating unannotated time as negative would bury the real labels and invent easy negatives & (this work) \\
+3 & Alignment & No time shift. Sensor/annotation lag measured by cross-correlating the optical chewing envelope with the labels: median +0.10\,s, all 20 sessions within 0.2\,s & A correction must be measured, not assumed; a residual lag of one packet would corrupt every label edge & (this work) \\
+4 & Window & 8\,s (1024 samples), non-overlapping at evaluation & 7 to 17 chew cycles at typical chewing rates (0.94--2.17\,Hz); matches the packet size. Window length has a measurable effect and is swept in Section~\ref{sec:plan} & \citet{po2011chewing, banos2014window} \\
+
+\multicolumn{5}{@{}l}{\textit{Input}} \\
+5 & Representation & Raw time series, 1024 samples × 4 channels, no hand-crafted features and no spectrum & A magnitude spectrum keeps which rhythms are present but discards when they occur; a bite is a transient and chewing an envelope. Largest single effect in the ablation (F1 −0.087 with FFT input) & \citet{hannun2019cardiologist, ghosh2022comparative, wang2017strong} \\
+6 & Normalisation & Per window, per channel: mean removed, z-scored over valid samples only; missing samples set to 0 after scaling & Optical baseline varies by participant and fit on the face; DC level is not information about chewing. A literal −1 against counts near 3000 injects a step at every gap & \citet{ismailfawaz2019deep} \\
+
+\multicolumn{5}{@{}l}{\textit{Network}} \\
+7 & Convolutional trunk & Three 1D conv blocks: 32@\textit{k}9/s2, 64@\textit{k}9/s2, 64@\textit{k}5, each with batch norm and ReLU, max-pool 2 after the first two. Output 64 time steps × 64 features & Learns its own band-pass filters from data. Each output step covers about 0.9\,s of signal (one chew cycle) at 125\,ms spacing & \citet{wang2017strong, ghosh2022comparative} \\
+8 & Channel attention & Squeeze-and-excitation: global average → dense 16 (ReLU) → dense 64 (sigmoid) → rescale each feature channel & Optical carries chewing; accelerometers carry motion that is sometimes signal and often artefact. Reweights per window at negligible cost & \citet{hu2018squeeze} \\
+9 & Temporal pooling & Attention pooling: one score per time step (1 × 1 conv), softmax over the 64 steps, weighted sum & Global averaging dilutes a 1--2\,s bite across 8\,s. Attention weights the informative steps, as in multiple-instance learning & \citet{ilse2018attention} \\
+10 & Classifier & Dense 64 (ReLU), dropout 0.3, sigmoid output & Small head; about 47\,k parameters in total at inference & -- \\
+11 & Auxiliary head & Chew-count regression (dense 32 → 1, softplus), target scaled by its 99th percentile. Used in training only & One label bit per window is thin supervision; counting chews asks the shared trunk to represent the chewing rhythm & \citet{caruana1997multitask} \\
+
+\multicolumn{5}{@{}l}{\textit{Training}} \\
+12 & Loss & Binary cross-entropy (weight 1.0) + chew MSE (weight 0.2); class-balanced sample weights computed per fold & Auxiliary loss is a regulariser, not the objective. Eating fraction ranges 17--74\% by session, so the rare class changes with the fold & \citet{caruana1997multitask} \\
+13 & Augmentation & 50\% overlapping windows (4\,s hop) at training time only & Roughly doubles the training windows at no collection cost; evaluation stays on the non-overlapping grid so no second is scored twice & \citet{um2017augmentation} \\
+14 & Optimisation & Adam, learning rate 0.001, batch 64, up to 80 epochs, early stopping (patience 12) and learning-rate halving on validation loss & Standard; validation participants are held out from training, never random windows & -- \\
+
+\multicolumn{5}{@{}l}{\textit{Evaluation}} \\
+15 & Validation & Leave-one-subject-out: each participant is the test set once. Inner validation on two further held-out participants & Windows of one meal are near-duplicates; any split below participant level leaks and overstates performance & \citet{saeb2017need, diou2022intake} \\
+16 & Threshold & Chosen on the inner validation participants at the centre of the F1 plateau; never on the test participant & The F1 curve is flat near its peak, so the exact argmax on two participants is noise & -- \\
+17 & Post-processing & None. Median smoothing over 3 windows was tested and rejected (F1 −0.079) & Meals are punctuated by pauses; at 8\,s the label genuinely switches, and smoothing erases short real bouts & (this work) \\
+18 & Metrics & F1 and balanced accuracy lead; accuracy, precision, recall reported alongside, pooled over all held-out windows & Class balance differs by participant; accuracy alone rewards predicting the majority class & \citet{bell2020scoping} \\
+\end{xltabular}

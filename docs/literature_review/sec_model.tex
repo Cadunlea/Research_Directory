@@ -1,0 +1,38 @@
+\section{Model description}
+\label{sec:model}
+
+The model is a compact one-dimensional convolutional network that reads the
+raw AIM-2 sensor signals and outputs the probability that an 8\,s window
+contains eating (Figure~\ref{fig:architecture}). It has four parts. A
+convolutional feature extractor learns its own filters from the time series
+instead of receiving hand-crafted features or a spectrum. A squeeze-and-excitation
+gate reweights the learned feature channels in each window. An attention
+pooling layer weights the time steps that carry the evidence. Finally, the
+output has two heads: one classifies eating, and one counts chews and is used
+only during training. The network has 47,282 parameters at inference
+(Table~\ref{tab:layers}). Table~\ref{tab:model} lists every design decision
+with its reason and the literature it rests on.
+
+\begin{figure}[H]
+\centering
+\input{fig_architecture}
+\caption{Model architecture. Shaded blocks are the two attention mechanisms.
+The dashed chew-count head is trained jointly and discarded at inference.
+Output shapes are time steps × features.}
+\label{fig:architecture}
+\end{figure}
+
+\input{tab_layers}
+
+\input{tab_model}
+
+\subsection{Current performance}
+
+Under leave-one-subject-out validation on the 20 annotated sessions
+available at the time of writing, pooled over all 3,503 held-out
+non-overlapping windows, the model reaches F1 0.838, accuracy 0.890,
+balanced accuracy 0.879, precision 0.828 and recall 0.848. Per-participant
+F1 varies considerably (mean 0.811, standard deviation 0.124), which is the
+expected cost of leave-one-subject-out and the honest measure of how the
+model generalises to a new person. These figures will be regenerated on the
+61 sessions now annotated.

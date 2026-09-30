@@ -1,0 +1,27 @@
+% Layer-by-layer dimensions and parameter counts (inference model plus the
+% training-only chew head). Counts computed from the layer definitions in
+% train_food_intake_v2.build_model.
+\begin{table}[H]
+\centering
+\caption{Layer dimensions. An 8\,s window at 128\,Hz is 1024 samples; each of
+the 64 output time steps covers about 0.9\,s of signal at 125\,ms spacing.}
+\label{tab:layers}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\rowcolor{black!8}
+\textbf{Layer} & \textbf{Configuration} & \textbf{Output} & \textbf{Parameters} \\
+\midrule
+Input            & Acc X, Y, Z, Optical            & 1024 × 4  & -- \\
+Conv block 1     & 32 × \textit{k}9, stride 2, BN, max-pool 2 & 256 × 32  & 1,312 \\
+Conv block 2     & 64 × \textit{k}9, stride 2, BN, max-pool 2 & 64 × 64   & 18,752 \\
+Conv block 3     & 64 × \textit{k}5, BN                       & 64 × 64   & 20,800 \\
+Channel attention & 64 → 16 → 64, sigmoid          & 64 × 64   & 2,128 \\
+Attention pooling & 1 × 1 conv, softmax over time  & 64        & 65 \\
+Dense            & 64, ReLU, dropout 0.3           & 64        & 4,160 \\
+Eating head      & 1, sigmoid                      & 1         & 65 \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Total at inference}}               & \textit{47,282} \\
+Chew-count head  & 32 → 1, softplus (training only) & 1        & 2,113 \\
+\bottomrule
+\end{tabular}
+\end{table}

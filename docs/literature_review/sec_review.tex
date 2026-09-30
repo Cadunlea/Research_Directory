@@ -1,0 +1,184 @@
+\section{Literature review}
+\label{sec:review}
+
+Objective measurement of eating behaviour matters for obesity, eating
+disorders and diabetes research, and self-report is known to be inaccurate
+and cannot capture in-meal behaviour such as eating rate or pauses
+\citep{diou2022intake}. Wearable sensors that detect chewing, bites or hand
+gestures have therefore become a central approach, ranging from
+classical machine learning on hand-crafted features to end-to-end deep
+learning, with the aims of improving accuracy, reducing false detections
+and generalising to people outside the training set \citep{bell2020scoping}.
+\citet{fontana2014aim} introduced the Automatic Ingestion Monitor (AIM),
+combining jaw-motion, hand-gesture and accelerometer sensors, and reported
+89.8\% food-intake detection accuracy over 24 hours of free living. Its
+successor, AIM-2 \citep{doulah2021aim2}, moved the sensors onto eyeglasses:
+a temporalis-muscle sensor and a 3-axis accelerometer at 128\,Hz. It extracted
+38 hand-crafted features per signal, selected nine by minimum-redundancy
+maximum-relevance, and classified 10\,s epochs with a support vector machine,
+reaching F1 0.818 under leave-one-subject-out validation on 30 participants,
+as summarised in Table~\ref{tab:literature}. These feature-engineered models
+work, but their performance is bounded by the features chosen by hand, and
+they are sensitive to noise and to variation between people.
+
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{30mm}
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}X@{}}
+\caption{State-of-the-art methods for food-intake and chewing detection, and
+the two ECG studies whose methods transfer to this problem.}
+\label{tab:literature}\\
+\toprule
+\rowcolor{black!8}
+\textbf{References} & \textbf{Techniques} & \textbf{Goals} & \textbf{Findings} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{black!8}
+\textbf{References} & \textbf{Techniques} & \textbf{Goals} & \textbf{Findings} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+\citet{doulah2021aim2} & AIM-2; hand-crafted features, mRMR selection, SVM &
+  Food-intake detection with passive food-image capture &
+  F1 0.818 (LOSO, 30 participants); camera triggered only during eating \\
+\citet{papapanagiotou2017chewing} & 1D CNN on raw in-ear audio &
+  Chewing detection without hand-crafted features &
+  Accuracy 0.980, F1 0.883 \\
+\citet{kyritsis2021endtoend} & CNN + LSTM, end to end on raw wrist IMU &
+  Bite and meal detection in the wild &
+  Bite F1 0.923 (LOSO) \\
+\citet{ghosh2022comparative} & Five deep networks (MLP, time-CNN, FCN,
+  ResNet, Inception) on AIM-2 optical and accelerometer time series &
+  Compare deep architectures for food-intake detection &
+  ResNet best, balanced accuracy 93.47\% \\
+\citet{ghosh2024integrated} & Wavelet scalogram of accelerometer, fused with
+  food-image recognition &
+  Reduce false positives in free living &
+  Fused F1 80.77\%; fusion cuts false positives \\
+\citet{stankoski2021smartwatch} & Selection of hard negative examples for
+  training &
+  Imbalanced data with imperfect labels &
+  Person-independent F1 0.82 \\
+\citet{wang2024eating} & Temporal CNN + multi-head self-attention &
+  Eating speed from wrist IMU, towards free living &
+  61 participants, 513\,h; eating-speed MAPE 0.110 \\
+\citet{vedovelli2026recognition} & Transformer encoder and other models on
+  smartwatch sensors &
+  Eating-episode recognition &
+  Transformer: sensitivity 0.691, specificity 0.504 (LOSO) \\
+\citet{hannun2019cardiologist} & 34-layer 1D CNN on raw single-lead ECG &
+  End-to-end arrhythmia classification &
+  F1 0.837, above the average cardiologist (0.780) \\
+\citet{ikram2025transformer} & Transformer on MIT-BIH beats &
+  Five-class arrhythmia classification &
+  Accuracy 97.1\%; split not at patient level \\
+\end{xltabular}
+
+\subsection{From hand-crafted features to learned representations}
+
+To address the limits of hand-crafted features, several groups trained
+networks directly on the raw signal. \citet{papapanagiotou2017chewing}
+detected chewing with a 1D convolutional network applied to raw in-ear audio
+windows, and \citet{kyritsis2021endtoend} trained a CNN feature extractor and
+an LSTM jointly on raw wrist inertial data, reaching a bite-detection F1 of
+0.923 under leave-one-subject-out evaluation. On AIM-2 itself,
+\citet{ghosh2022comparative} compared five deep architectures on the optical
+and accelerometer time series and found the residual network best, with a
+balanced accuracy of 93.47\%. The same pattern holds outside eating: the
+fully convolutional network of \citet{wang2017strong}, three blocks of
+convolution, batch normalisation and ReLU, is a strong baseline across
+time-series benchmarks.
+
+The closest analogue to this problem is electrocardiography.
+\citet{hannun2019cardiologist} classified arrhythmia with a 34-layer 1D CNN
+applied end to end to raw single-lead ECG at 200\,Hz, and exceeded the
+average cardiologist (F1 0.837 against 0.780). ECG and the AIM-2 signals
+share a sampling rate of the same order, a quasi-periodic structure (heart
+beats at about 1\,Hz, chews at 0.94--2.17\,Hz \citep{po2011chewing}) and the
+need to recognise short events inside longer recordings. This motivates the
+first and most important design choice in this work: the model reads the
+time series, not a spectrum. \citet{ghosh2024integrated} took the opposite
+route, converting accelerometer signals to a wavelet scalogram image. A
+magnitude spectrum says which rhythms are present in a window but discards
+when they occur, which is the information that separates a bite from
+background motion; a scalogram keeps a time axis, but at a resolution fixed
+by the transform rather than learned from the data.
+
+\subsection{Attention and Transformers}
+
+Attention mechanisms let a network weight the parts of its input that carry
+evidence. Squeeze-and-excitation \citep{hu2018squeeze} gates feature channels
+with a small learned function of their global average, at negligible cost.
+Attention-based pooling \citep{ilse2018attention} treats a window as a bag
+of instances and learns which instances determine its label; for eating,
+the instances are time steps and a single bite may be the deciding one.
+Transformers extend this to attention between all time steps.
+\citet{ikram2025transformer} applied a Transformer to five-class arrhythmia
+classification on MIT-BIH, reporting 97.1\% accuracy. The reported 80/20
+split is of preprocessed samples rather than of patients, so the figure
+measures performance on new beats from known patients, not on new
+patients. In eating detection, \citet{wang2024eating} combined a temporal
+CNN with multi-head self-attention to measure eating speed from wrist IMU
+data on 61 participants, while \citet{vedovelli2026recognition} found that a
+Transformer encoder on smartwatch data under leave-one-subject-out gave the
+highest sensitivity (0.691) but a specificity of only 0.504, which is the
+false-positive problem in its clearest form.
+
+Despite their promise, Transformers carry many more parameters than the
+attention layers above, and whether they help at a given data size is an
+empirical question rather than a given. With 20 annotated sessions (7.8\,h),
+this work uses the two light attention mechanisms and treats a Transformer
+over the convolutional features as an experiment to run once the annotated
+data has grown (Section~\ref{sec:plan}).
+
+\subsection{Supervision, augmentation and negative data}
+
+Small annotated datasets call for more supervision per example and for more
+examples per recording. Multi-task learning \citep{caruana1997multitask}
+improves generalisation by training a shared representation on related
+tasks; here, counting chews is the related task, since the ground truth
+already contains chew annotations. Augmentation of wearable sensor data
+raised accuracy from 77.54\% to 86.88\% in Parkinson's disease monitoring
+\citep{um2017augmentation}; overlapping windows are the simplest form of it.
+Window length itself trades resolution for context, and has a measurable
+effect on recognition \citep{banos2014window}.
+
+False positives are the persistent weakness of eating detectors: many
+non-eating activities produce jaw and head motion. \citet{stankoski2021smartwatch}
+reduced them by deliberately selecting hard negative examples for training,
+and \citet{ghosh2024integrated} by fusing the sensor classifier with food-image
+recognition. Finally, evaluation practice varies widely across the field
+\citep{bell2020scoping}. \citet{saeb2017need} showed that record-wise
+cross-validation, where windows from one person appear in both training and
+test sets, can massively overestimate accuracy, and that subject-wise
+validation is the one that matches the use case. The leave-one-subject-out
+protocol used by \citet{doulah2021aim2} and \citet{diou2022intake} is adopted
+here for the same reason.
+
+\subsection{Contribution of this work}
+
+\begin{itemize}
+  \item A compact convolutional model with channel attention, temporal
+        attention pooling and an auxiliary chew-count head, reading raw
+        AIM-2 optical and accelerometer signals directly from the ETS
+        database, evaluated leave-one-subject-out.
+  \item A controlled ablation showing that the input representation
+        accounts for most of the performance: replacing the time series
+        with an FFT magnitude spectrum costs 0.087 F1 and 0.180 precision,
+        while the attention and auxiliary components are within noise at
+        the current data size.
+  \item Two documented negative results with a mechanism: temporal median
+        smoothing and un-marked context windows both lower F1, because
+        meals at 8\,s resolution are punctuated rather than contiguous.
+  \item A measured check of sensor-annotation alignment on every session,
+        replacing an assumed correction with a verified one.
+\end{itemize}
+
+Despite the progress in deep learning for intake monitoring, several
+challenges persist: limited annotated data, variation between participants
+in sensor fit and chewing style, false positives from non-eating jaw and head
+motion, and inconsistent evaluation that makes published results hard to
+compare. Addressing these requires models that generalise to people they
+have not seen, evaluated in the way they would be used.

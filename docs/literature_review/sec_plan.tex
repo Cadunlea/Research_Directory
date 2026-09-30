@@ -1,0 +1,130 @@
+\section{Proposed study design}
+\label{sec:plan}
+
+The literature in Section~\ref{sec:review} points to one gap more than any
+other: food-intake detectors from wearable chewing sensors are usually
+reported as a single architecture with a single number, and the design
+decisions behind them are rarely isolated. The ablation in
+Table~\ref{tab:ablation} already shows that those decisions are not equally
+important, since the input representation accounts for most of the
+performance and the attention components cannot be separated from noise.
+The proposed study makes that the question rather than a side result: which
+design dimensions matter for deep food-intake detection from a chewing
+sensor, measured one at a time under leave-one-subject-out validation.
+
+\begin{table}[H]
+\centering
+\caption{Preliminary ablation: the model with one component removed or
+added. 20 annotated sessions, participant-level 4-fold cross-validation,
+same folds for every row. Fold-to-fold spread in F1 is about 0.048, so
+effects smaller than that are not distinguishable from noise. To be repeated
+under leave-one-subject-out on the enlarged dataset.}
+\label{tab:ablation}
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+\rowcolor{black!8}
+\textbf{Variant} & \textbf{F1} & \textbf{Change} & \textbf{Precision} & \textbf{Verdict} \\
+\midrule
+Full model                             & 0.854 & --     & 0.876 & -- \\
+FFT magnitude input instead of time series & 0.767 & −0.087 & 0.696 & Hurts \\
+No overlapping training windows        & 0.829 & −0.025 & 0.834 & Possibly hurts \\
+No attention (global average pooling)  & 0.847 & −0.007 & 0.857 & Within noise \\
+No chew-count head                     & 0.849 & −0.006 & 0.857 & Within noise \\
+Add median smoothing (3 windows)       & 0.775 & −0.079 & 0.765 & Hurts \\
+Add 8\,s context each side, no marker  & 0.775 & −0.080 & 0.683 & Hurts \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Protocol, fixed for every experiment}
+
+\begin{itemize}
+  \item \textbf{Leave-one-subject-out validation} on all annotated
+        participants, following \citet{saeb2017need}. With 20 to 61
+        sessions this is computationally feasible, and it is the closest
+        approximation of the use case: a participant the model has never
+        seen.
+  \item \textbf{Paired comparison per participant.} Each variant is scored
+        on the same held-out participants as the reference model, so the
+        difference can be tested per participant (Wilcoxon signed-rank)
+        rather than read against the spread of fold means.
+  \item \textbf{Three seeds per configuration}, reported as mean and range,
+        so initialisation noise is not mistaken for an effect.
+  \item \textbf{False positives per hour of non-eating} reported alongside
+        F1, because that is the failure mode that matters in free-living use
+        and the one negative data (below) is meant to fix.
+\end{itemize}
+
+\subsection{Dimensions to explore}
+
+\begin{xltabular}{\textwidth}{@{}>{\raggedright\arraybackslash}p{27mm}
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}X
+                               >{\raggedright\arraybackslash}p{26mm}@{}}
+\caption{Planned experiments. Each changes one dimension of the model in
+Table~\ref{tab:model} and holds everything else fixed.}
+\label{tab:plan}\\
+\toprule
+\rowcolor{black!8}
+\textbf{Dimension} & \textbf{Levels} & \textbf{Question} & \textbf{Grounding} \\
+\midrule
+\endfirsthead
+\toprule
+\rowcolor{black!8}
+\textbf{Dimension} & \textbf{Levels} & \textbf{Question} & \textbf{Grounding} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+Published architectures & FCN, ResNet and Inception as compared by
+  \citet{ghosh2022comparative}, trained on the same folds &
+  Where does this model stand against the closest prior work on AIM-2, under
+  an identical protocol? &
+  \citet{ghosh2022comparative, wang2017strong} \\
+Input representation & Time series, FFT magnitude, wavelet scalogram &
+  Does keeping temporal structure explain the gain, and does a
+  time-frequency image recover it? &
+  \citet{ghosh2024integrated, hannun2019cardiologist} \\
+Sampling rate & 128, 64, 32, 16\,Hz &
+  How much of the signal is needed? Chewing lies below about 2.2\,Hz, so
+  32\,Hz still leaves a Nyquist margin of seven times. &
+  \citet{po2011chewing} \\
+Window length & 2, 4, 8, 16\,s &
+  Resolution against context: shorter windows localise bites, longer
+  windows contain more chew cycles. &
+  \citet{banos2014window} \\
+Context & None; 8\,s each side with a target-window marker channel &
+  Can surrounding signal help without the model answering "is there eating
+  anywhere nearby?" &
+  (this work) \\
+Chew-head weight & 0, 0.1, 0.2, 0.5, 1.0 &
+  How strongly should counting chews shape the features, and does it help
+  participants with weak optical signal? &
+  \citet{caruana1997multitask} \\
+Temporal model & Attention pooling; small Transformer encoder over the 64
+  convolutional time steps &
+  Does self-attention between time steps add to a convolutional front end
+  at this data size? &
+  \citet{ikram2025transformer, zerveas2021transformer, zeng2023transformers} \\
+Self-supervised pre-training & None; convolutional trunk pre-trained on
+  unannotated AIM-2 recordings in ETS &
+  Can the unannotated sensor data, most of what the database holds, stand
+  in for labels the study does not have? &
+  \citet{diou2022intake} \\
+Negative data & Annotated sessions only; plus non-eating recordings from
+  other ETS studies &
+  Do additional negative participants reduce false positives without
+  costing recall? &
+  \citet{bell2020scoping, ghosh2024integrated} \\
+\end{xltabular}
+
+The published-architecture row comes first: it is the comparison a reviewer
+will ask for, and it replaces comparisons with the lab's earlier model. The
+representation, sampling-rate and window rows are cheap and answer the
+questions raised at the 9/23 lab meeting directly. The Transformer row is the one most likely to be
+asked about by reviewers, and the one most at risk of overfitting on a
+dataset this size; it should be run only after the dataset has been
+enlarged to 61 sessions, and reported whether it helps or not. Negative
+data is expected to have the largest practical effect, since false
+positives are the model's main weakness, and is the natural joint
+experiment with the lab.
