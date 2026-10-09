@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 *.keras
 jitai_config.ini
+logs/
