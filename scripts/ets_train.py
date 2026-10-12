@@ -226,12 +226,17 @@ def cross_validate(
         monitor: str = "loss",
         threshold_objective: str = "f1",
         max_false_alarms: float = 15.0,
+        soft_targets: Optional[np.ndarray] = None,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
     `transform` converts raw windows into model input. `build_model` returns a
     compiled Keras model. When `auxiliary` is set the model is expected to have
     two outputs (food probability, chew count) and is fed both targets.
+
+    `soft_targets`, when given, replaces the 0/1 training target of the eating
+    output with the share of each window that is eating. Class weights, the
+    validation target and every evaluation still use the 0/1 labels.
     """
     import tensorflow as tf
 
@@ -303,7 +308,9 @@ def cross_validate(
             models.append(build_model(features.shape[1:]))
         model = models[0]
 
-        y_fit = windows.y[fit_rows].astype(np.float32)
+        hard_fit = windows.y[fit_rows]
+        y_fit = (hard_fit if soft_targets is None
+                 else soft_targets[fit_rows]).astype(np.float32)
         y_validation = windows.y[validation_rows].astype(np.float32)
 
         if auxiliary:
@@ -312,15 +319,20 @@ def cross_validate(
                                   "chews": chew_target[validation_rows]}
             # Keras applies class_weight per output only for single-output
             # models, so the imbalance is handled by sample weights instead.
-            weights = class_weights(windows.y[fit_rows])
+            weights = class_weights(hard_fit)
             sample_weight = {
-                "food": np.where(y_fit == 1, weights[1], weights[0]).astype(np.float32),
+                "food": np.where(hard_fit == 1, weights[1], weights[0]).astype(np.float32),
                 "chews": np.ones_like(y_fit),
             }
             fit_kwargs = dict(sample_weight=sample_weight)
         else:
             targets_fit, targets_validation = y_fit, y_validation
-            fit_kwargs = dict(class_weight=class_weights(windows.y[fit_rows]))
+            weights = class_weights(hard_fit)
+            # Keras's class_weight indexes by the integer label, which a soft
+            # target does not have; per-sample weights from the 0/1 label do
+            # the same job either way.
+            fit_kwargs = dict(sample_weight=np.where(
+                hard_fit == 1, weights[1], weights[0]).astype(np.float32))
 
         def make_callbacks():
             """Fresh callbacks per ensemble member. Callbacks carry state -

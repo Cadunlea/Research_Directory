@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pickle
 
+from pathlib import Path
+
 import numpy as np
 
 import ets_data
@@ -462,9 +464,27 @@ def test_every_configuration_gets_its_own_results_file():
                 ["--augment"], ["--learning-rate", "0.0003"],
                 ["--threshold-objective", "f0.5"],
                 ["--threshold-objective", "false-alarms"],
-                ["--threshold-objective", "false-alarms", "--max-false-alarms", "10"]]
+                ["--threshold-objective", "false-alarms", "--max-false-alarms", "10"],
+                ["--soft-labels"]]
     tags = [t.run_tag(t.normalise_config(parser.parse_args(v))) for v in variants]
     assert len(set(tags)) == len(tags), sorted(tags)
+
+
+def test_eating_fraction_agrees_with_the_label_and_survives_the_cache():
+    """The soft target must be the quantity the 0/1 label thresholds, and a
+    cache round trip must keep it, or a soft-label run trains on something
+    other than what it claims."""
+    import tempfile
+    windows = make_windows(8.0)
+    fraction = windows.eating_fraction
+    assert fraction is not None and fraction.shape == windows.y.shape
+    assert np.all((fraction >= 0) & (fraction <= 1))
+    assert np.array_equal(fraction > ets_data.EATING_THRESHOLD, windows.y == 1)
+    assert np.any((fraction > 0) & (fraction < 1)), "no partly-eating windows"
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "cache.npz"
+        ets_data.save_cache(windows, path)
+        assert np.array_equal(ets_data.load_cache(path).eating_fraction, fraction)
 
 
 if __name__ == "__main__":

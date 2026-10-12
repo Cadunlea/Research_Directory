@@ -294,6 +294,10 @@ class WindowSet:
     window_seconds: float
     hop_seconds: float
     context_seconds: float = 0.0    # extra signal each side; label is unchanged
+    # Share of each window's annotated samples that are eating (0-1). y is this
+    # thresholded at EATING_THRESHOLD; --soft-labels trains on it directly.
+    # None for caches built before it was recorded.
+    eating_fraction: Optional[np.ndarray] = None
 
     def __len__(self) -> int:
         return len(self.y)
@@ -335,7 +339,7 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
     context_samples = int(round(context_seconds * SENSOR_FS))
     input_samples = window_samples + 2 * context_samples
 
-    X_parts, y_parts, chew_parts = [], [], []
+    X_parts, y_parts, chew_parts, fraction_parts = [], [], [], []
     participants, studies, starts, missing_parts = [], [], [], []
 
     for session in sessions:
@@ -384,11 +388,13 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
             if missing_fraction > MAX_MISSING_FRACTION:
                 continue
 
-            label = int(labels[known].mean() > EATING_THRESHOLD)
+            fraction = float(labels[known].mean())
+            label = int(fraction > EATING_THRESHOLD)
             chew_marks = float(np.sum(chew[gt_lo:gt_hi] == 1))
 
             X_parts.append(block)
             y_parts.append(label)
+            fraction_parts.append(fraction)
             chew_parts.append(chew_marks)
             participants.append(session.participant)
             studies.append(session.study)
@@ -419,7 +425,8 @@ def build_windows(conn, sessions: Sequence[Session], window_seconds: float,
         starts=np.asarray(starts, dtype=np.float64),
         missing=np.asarray(missing_parts, dtype=np.float32),
         window_seconds=window_seconds, hop_seconds=hop_seconds,
-        context_seconds=context_seconds)
+        context_seconds=context_seconds,
+        eating_fraction=np.asarray(fraction_parts, dtype=np.float32))
 
 
 # --------------------------------------------------------------------------- #
@@ -435,8 +442,10 @@ def cache_path(cache_dir: Path, window_seconds: float, hop_seconds: float,
 
 def save_cache(windows: WindowSet, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    extra = ({} if windows.eating_fraction is None
+             else {"eating_fraction": windows.eating_fraction})
     np.savez_compressed(
-        path, X=windows.X, y=windows.y, chews=windows.chews,
+        path, **extra, X=windows.X, y=windows.y, chews=windows.chews,
         participants=windows.participants, studies=windows.studies,
         starts=windows.starts, missing=windows.missing,
         window_seconds=windows.window_seconds, hop_seconds=windows.hop_seconds,
@@ -452,7 +461,9 @@ def load_cache(path: Path) -> WindowSet:
         window_seconds=float(data["window_seconds"]),
         hop_seconds=float(data["hop_seconds"]),
         context_seconds=float(data["context_seconds"])
-        if "context_seconds" in data else 0.0)
+        if "context_seconds" in data else 0.0,
+        eating_fraction=data["eating_fraction"]
+        if "eating_fraction" in data else None)
 
 
 def get_windows(args, window_seconds: float, hop_seconds: Optional[float] = None,

@@ -62,6 +62,7 @@ holds everything else fixed.
 | `--monitor auc` | `loss` | Early stopping on validation ROC AUC instead of loss | Is early stopping keeping the right epoch? |
 | `--learning-rate X` | `0.001` | Adam learning rate; lower spreads learning over more epochs | Does the model peak too early to be tuned? |
 | `--augment` | off | Random per-channel amplitude scaling and Gaussian noise, training only | Does stopping person-specific shortcuts help new people? |
+| `--soft-labels` | off | Train on the share of each window that is eating instead of 0/1; evaluation unchanged. Needs a cache built with this version: `--rebuild-cache --cache-dir ets_cache_soft` | Do bout-edge windows, 40% of the errors, improve when the model is told they are partly eating? |
 | `--threshold-objective f0.5` | `f1` | Threshold chosen for F0.5 (precision weighted twice recall) | Fewer false positives at a small recall cost |
 | `--threshold-objective false-alarms --max-false-alarms N` | 15 | Most recall within N false alarms per hour of non-eating, chosen on validation participants | The operating point a deployment needs |
 | `--epochs N`, `--patience N` | `80`, `12` | Training length, early stopping | |

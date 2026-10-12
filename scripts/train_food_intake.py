@@ -453,6 +453,8 @@ def run_tag(config) -> str:
         parts.append(f"lr{config.learning_rate:g}")
     if config.inner_participants != 2:
         parts.append(f"inner{config.inner_participants}")
+    if config.soft_labels:
+        parts.append("soft")
     return "_".join(parts)
 
 
@@ -467,7 +469,44 @@ def describe(config) -> str:
         pieces.append(f"{config.transformer_layers}-layer transformer")
     pieces.append(f"chew head {config.chew_weight:g}" if config.chew_weight > 0
                   else "no chew head")
+    if config.soft_labels:
+        pieces.append("soft labels")
     return ", ".join(pieces)
+
+
+def check_soft_labels(config, windows, hop) -> np.ndarray:
+    """The eating fraction for --soft-labels, after checking it is usable.
+
+    Caches built before the fraction was recorded lack it, so a soft-label run
+    rebuilds into its own cache directory. That rebuild reads the database as
+    it is now; if annotations have changed since the default cache was built,
+    the windows differ and the run would not be comparable with the others,
+    so it stops here instead of after hours of training.
+    """
+    if windows.eating_fraction is None:
+        raise SystemExit(
+            "--soft-labels needs the eating fraction, which this cache predates.\n"
+            "Add:  --rebuild-cache --cache-dir ets_cache_soft")
+    own = ets_data.cache_path(Path(config.cache_dir), config.window_seconds, hop,
+                              config.context_seconds)
+    default = ets_data.cache_path(Path("ets_cache"), config.window_seconds, hop,
+                                  config.context_seconds)
+    if default.is_file() and default.resolve() != own.resolve():
+        with np.load(default, allow_pickle=False) as reference:
+            same = (len(reference["y"]) == len(windows.y)
+                    and np.array_equal(reference["y"], windows.y)
+                    and np.allclose(reference["starts"], windows.starts))
+        if not same:
+            raise SystemExit(
+                f"the windows in {own} differ from {default} (annotations "
+                "changed since?), so this run would not be comparable with the "
+                "others. Rebuild both caches before comparing.")
+        print(f"windows identical to {default}: yes")
+    hard = windows.y == 1
+    print(f"soft labels: {np.mean((windows.eating_fraction > 0) & (windows.eating_fraction < 1)):.1%} "
+          f"of windows are partly eating; mean target {windows.eating_fraction[hard].mean():.2f} "
+          f"for eating windows, {windows.eating_fraction[~hard].mean():.2f} for the rest")
+    return windows.eating_fraction
 
 
 def run(config) -> Dict:
@@ -486,6 +525,7 @@ def run(config) -> Dict:
     # A cache is built once per window/hop/context; rebuilding it again for the
     # next level of a sweep would only repeat the same database reads.
     config.rebuild_cache = False
+    soft_targets = check_soft_labels(config, windows, hop) if config.soft_labels else None
 
     builder = ARCHITECTURES[config.architecture]
     auxiliary = config.chew_weight > 0
@@ -506,7 +546,8 @@ def run(config) -> Dict:
             smoothing_kernel=config.smoothing, n_models=config.ensemble,
             monitor=config.monitor,
             threshold_objective=config.threshold_objective,
-            max_false_alarms=config.max_false_alarms, verbose=True)
+            max_false_alarms=config.max_false_alarms,
+            soft_targets=soft_targets, verbose=True)
 
         participants = ets_train.participant_records(results)
         title = f"{tag}" + (f"  (seed {seed})" if config.repeats > 1 else "")
@@ -593,7 +634,7 @@ CONFIG_KEYS = ("architecture", "input", "window_seconds", "sample_rate",
                "smoothing", "ensemble", "folds", "inner_participants",
                "seed", "repeats", "epochs", "patience", "monitor",
                "augment", "learning_rate", "threshold_objective",
-               "max_false_alarms")
+               "max_false_alarms", "soft_labels")
 
 
 # --------------------------------------------------------------------------- #
@@ -649,6 +690,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="what early stopping watches on the validation "
                         "participants: total loss, or ROC AUC of the eating "
                         "output (threshold-free)")
+    g.add_argument("--soft-labels", action="store_true",
+                   help="train on the share of each window that is eating "
+                        "instead of 0/1; evaluation is unchanged. Needs a cache "
+                        "built with this version (--rebuild-cache --cache-dir "
+                        "ets_cache_soft)")
     g.add_argument("--smoothing", type=int, default=1,
                    help="median filter width in windows; 1 = off (default). "
                         "Measured harmful at 8 s")
