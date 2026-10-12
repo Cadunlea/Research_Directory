@@ -7,6 +7,13 @@ seconds.
 
     python error_breakdown.py results\<run>.json
     python error_breakdown.py results\<run>.json --all-participants
+    python error_breakdown.py results\<run>.json --threshold 0.5
+
+Each fold's threshold is chosen on its own inner validation participants, so
+it differs between participants; the table shows it. --threshold applies one
+fixed value to every fold instead, as a sensitivity check: a value picked after
+looking at these results is chosen on the test participants, so it is not a
+reportable result.
 
 MISSED EATING (false negatives)
     edge        a neighbour is eating and a neighbour is not: first or last
@@ -116,6 +123,9 @@ def main() -> int:
     parser.add_argument("run", help="result JSON of a finished run")
     parser.add_argument("--all-participants", action="store_true",
                         help="print every participant, not only the 10 weakest")
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="one fixed threshold for every fold instead of each "
+                             "fold's own (sensitivity check only)")
     args = parser.parse_args()
 
     path = Path(args.run)
@@ -129,6 +139,9 @@ def main() -> int:
     probability = data[f"probability_seed{seed}"]
     threshold = data[f"threshold_seed{seed}"]
     keep = keep & np.isfinite(probability) & np.isfinite(threshold)
+    fold_threshold = threshold.copy()
+    if args.threshold is not None:
+        threshold = np.full_like(threshold, args.threshold)
     pred = (probability >= threshold).astype(int)
     window = float(data["window_seconds"])
     participants = data["participants"].astype(str)
@@ -153,6 +166,14 @@ def main() -> int:
     print(f"  {int(keep.sum()):,} held-out windows of {window:g} s; "
           f"F1 {f1(tp, fp, fn):.3f} (run reported "
           f"{record['summary']['pooled_f1']:.3f})")
+    per_participant = {p: float(fold_threshold[rows][participants[rows] == p][0])
+                       for p in np.unique(participants[rows])}
+    values = np.array(list(per_participant.values()))
+    print(f"  fold thresholds across participants: min {values.min():.2f}, "
+          f"median {np.median(values):.2f}, max {values.max():.2f}")
+    if args.threshold is not None:
+        print(f"  SENSITIVITY CHECK: every fold scored at a fixed threshold of "
+              f"{args.threshold:g}, not its own")
 
     print(f"\n  missed eating: {fn:,} windows ({fn / max(tp + fn, 1):.1%} of eating)")
     print(f"  {'':14s}{'windows':>9s}{'share':>8s}{'F1 if fixed':>13s}")
@@ -185,6 +206,7 @@ def main() -> int:
         p_fn = int(np.sum((y[mine] == 1) & (pred[mine] == 0)))
         kinds = Counter(labels[i][:2] for i in mine if i in labels)
         row = {"participant": participant, "windows": len(mine),
+               "threshold": round(per_participant[participant], 3),
                "f1": f1(p_tp, p_fp, p_fn), "missed": p_fn, "false_alarms": p_fp}
         for kind in FN_KINDS:
             row[f"missed_{kind}"] = kinds[("fn", kind)]
@@ -196,17 +218,18 @@ def main() -> int:
     shown = table if args.all_participants else table[:10]
     print(f"\n  {'weakest participants' if not args.all_participants else 'participants'}"
           f" (counts of windows)")
-    print(f"  {'':12s}{'':6s}{'':6s}{'---- missed eating ----':>27s}"
+    print(f"  {'':12s}{'':6s}{'':6s}{'':6s}{'---- missed eating ----':>27s}"
           f"{'---- false alarms ----':>28s}")
-    print(f"  {'participant':12s}{'F1':>6s}{'wins':>6s}"
+    print(f"  {'participant':12s}{'F1':>6s}{'thr':>6s}{'wins':>6s}"
           f"{'edge':>8s}{'mid':>8s}{'short':>8s}{'  ':3s}"
           f"{'edge':>8s}{'isol':>8s}{'sust':>8s}")
     for r in shown:
-        print(f"  {r['participant']:12s}{r['f1']:6.3f}{r['windows']:6d}"
+        print(f"  {r['participant']:12s}{r['f1']:6.3f}{r['threshold']:6.2f}{r['windows']:6d}"
               f"{r['missed_edge']:8d}{r['missed_mid-meal']:8d}{r['missed_short bout']:8d}{'':3s}"
               f"{r['false_edge']:8d}{r['false_isolated']:8d}{r['false_sustained']:8d}")
 
-    out = path.with_name(f"{record['tag']}_errors.csv")
+    suffix = "" if args.threshold is None else f"_thr{args.threshold:g}"
+    out = path.with_name(f"{record['tag']}_errors{suffix}.csv")
     with open(out, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(table[0]))
         writer.writeheader()
