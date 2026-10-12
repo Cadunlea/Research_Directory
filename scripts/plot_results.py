@@ -8,6 +8,9 @@ installed), so every figure matches the document and the slides.
         per-participant F1, and a timeline of predicted probability against
         the annotation for the best, median and worst participant
 
+    python plot_results.py results\<run>.json --participants AIM130163 AIM112400
+        timelines of the named participants instead, one panel per session
+
     python plot_results.py results\*.json --compare
         pooled F1 of every run with its 95% interval against the reference
         (run compare_runs.py first; it writes the interval)
@@ -22,6 +25,7 @@ import csv
 import glob
 import json
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -73,7 +77,8 @@ def participant_figure(record: dict, out: Path) -> None:
     save(figure, out)
 
 
-def timeline_figure(record: dict, predictions: Path, out: Path) -> None:
+def timeline_figure(record: dict, predictions: Path, out: Path,
+                    participants: Sequence[str] = ()) -> None:
     data = np.load(predictions, allow_pickle=False)
     seed = record["repeats"][0]["seed"]
     probability = data[f"probability_seed{seed}"]
@@ -81,13 +86,28 @@ def timeline_figure(record: dict, predictions: Path, out: Path) -> None:
     evaluated = data["evaluated"]
     window = float(data["window_seconds"])
 
-    ranked = sorted(record["participants"].items(), key=lambda kv: kv[1]["f1"])
-    picks = [ranked[-1], ranked[len(ranked) // 2], ranked[0]]
-    labels = ["best", "median", "worst"]
+    scores_of = record["participants"]
+    if participants:
+        missing = [p for p in participants if p not in scores_of]
+        if missing:
+            raise SystemExit(f"not in this run: {', '.join(missing)}")
+        named = [(p, "named") for p in participants]
+    else:
+        ranked = sorted(scores_of, key=lambda p: scores_of[p]["f1"])
+        named = [(ranked[-1], "best"), (ranked[len(ranked) // 2], "median"),
+                 (ranked[0], "worst")]
+    # One panel per session: a participant's two sessions are hours apart.
+    panels = []
+    for participant, label in named:
+        mine = (data["participants"] == participant) & evaluated
+        for study in np.unique(data["studies"][mine]):
+            panels.append((participant, label, study,
+                           np.flatnonzero(mine & (data["studies"] == study))))
 
-    figure, axes = plt.subplots(len(picks), 1, figsize=(8, 2.1 * len(picks)))
-    for axis, (participant, scores), label in zip(np.atleast_1d(axes), picks, labels):
-        rows = np.flatnonzero((data["participants"] == participant) & evaluated)
+    figure, axes = plt.subplots(len(panels), 1, figsize=(8, 2.1 * len(panels)),
+                                squeeze=False)
+    for axis, (participant, label, study, rows) in zip(axes[:, 0], panels):
+        scores = scores_of[participant]
         rows = rows[np.argsort(data["starts"][rows])]
         minutes = (data["starts"][rows] - data["starts"][rows][0]) / 60.0
         truth = data["y"][rows]
@@ -98,10 +118,11 @@ def timeline_figure(record: dict, predictions: Path, out: Path) -> None:
         axis.axhline(threshold[rows][0], color=MID, linewidth=1, linestyle="--")
         axis.set_ylim(0, 1)
         axis.set_ylabel("p(eating)")
-        axis.set_title(f"{participant} ({label}, F1 {scores['f1']:.3f}). "
+        tag = "" if label == "named" else f"{label}, "
+        axis.set_title(f"{participant} session {study} ({tag}F1 {scores['f1']:.3f}). "
                        f"Shaded: annotated eating. Dashed: threshold.",
                        loc="left")
-    np.atleast_1d(axes)[-1].set_xlabel("Minutes from start of annotation")
+    axes[-1, 0].set_xlabel("Minutes from start of annotation")
     save(figure, out)
 
 
@@ -137,6 +158,9 @@ def main() -> int:
                         help="one chart of every run, from compare_runs.py's CSV")
     parser.add_argument("--csv", default="results_summary.csv")
     parser.add_argument("--out-dir", default="figures")
+    parser.add_argument("--participants", nargs="+", default=(),
+                        help="timeline of these participants (every session) "
+                             "instead of the best, median and worst")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -155,8 +179,16 @@ def main() -> int:
             continue
         with open(path, encoding="utf-8") as handle:
             record = json.load(handle)
-        participant_figure(record, out_dir / f"{record['tag']}_participants")
         predictions = path.with_name(f"{record['tag']}_predictions.npz")
+        if args.participants:
+            if not predictions.is_file():
+                raise SystemExit(f"{predictions} not found")
+            timeline_figure(record, predictions,
+                            out_dir / f"{record['tag']}_timeline_"
+                                      f"{'_'.join(args.participants)}",
+                            args.participants)
+            continue
+        participant_figure(record, out_dir / f"{record['tag']}_participants")
         if predictions.is_file():
             timeline_figure(record, predictions, out_dir / f"{record['tag']}_timeline")
     return 0
