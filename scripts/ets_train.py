@@ -200,6 +200,142 @@ def class_weights(y: np.ndarray) -> Dict[int, float]:
     return {0: total / (2.0 * negatives), 1: total / (2.0 * positives)}
 
 
+# --------------------------------------------------------------------------- #
+# sequences of consecutive windows (--sequence)
+# --------------------------------------------------------------------------- #
+def sequence_chains(windows: ets_data.WindowSet, rows: np.ndarray
+                    ) -> List[np.ndarray]:
+    """Runs of consecutive windows among `rows`, each in time order.
+
+    Consecutive means same session and starting exactly one window length
+    after the previous one. With a half-window training hop this yields two
+    interleaved chains per stretch of recording, one per grid phase; a gap in
+    the recording (dropped windows) ends a chain rather than being bridged.
+    """
+    rows = np.asarray(rows)
+    chains: List[np.ndarray] = []
+    step = windows.window_seconds
+    keys = np.char.add(np.char.add(windows.participants[rows].astype(str), "|"),
+                       windows.studies[rows].astype(str))
+    for key in np.unique(keys):
+        session = rows[keys == key]
+        by_start = {round(float(windows.starts[r]), 2): int(r) for r in session}
+        following = {}
+        for r in session:
+            nxt = by_start.get(round(float(windows.starts[r]) + step, 2))
+            if nxt is not None:
+                following[int(r)] = nxt
+        heads = sorted(set(map(int, session)) - set(following.values()),
+                       key=lambda r: windows.starts[r])
+        for head in heads:
+            chain = [head]
+            while chain[-1] in following:
+                chain.append(following[chain[-1]])
+            chains.append(np.asarray(chain))
+    return chains
+
+
+def sequence_index(chains: Sequence[np.ndarray], length: int, stride: int
+                   ) -> np.ndarray:
+    """(n_sequences, length) window indices, -1 where a short chain is padded.
+
+    Every window of every chain falls in at least one sequence: starts step by
+    `stride`, and the last sequence of a chain is aligned to the chain's end.
+    """
+    out = []
+    for chain in chains:
+        if len(chain) <= length:
+            padded = np.full(length, -1, dtype=np.int64)
+            padded[:len(chain)] = chain
+            out.append(padded)
+            continue
+        starts = list(range(0, len(chain) - length + 1, stride))
+        if starts[-1] != len(chain) - length:
+            starts.append(len(chain) - length)
+        out.extend(chain[s:s + length] for s in starts)
+    return np.stack(out) if out else np.zeros((0, length), dtype=np.int64)
+
+
+def gather(values: np.ndarray, index: np.ndarray) -> np.ndarray:
+    """values[index] with padded positions (-1) set to zero."""
+    out = values[np.maximum(index, 0)]
+    out[index < 0] = 0
+    return out
+
+
+def _sequence_batches_class():
+    import tensorflow as tf
+
+    class _SequenceBatches(tf.keras.utils.PyDataset):
+        """Batches of window sequences, gathered on the fly so the training
+        set is never copied once per sequence it appears in."""
+
+        def __init__(self, features, index, targets, weights, batch_size,
+                     shuffle, seed, as_dict):
+            super().__init__()
+            self.features, self.index = features, index
+            self.targets, self.weights = targets, weights
+            self.batch_size, self.shuffle, self.as_dict = batch_size, shuffle, as_dict
+            self.rng = np.random.default_rng(seed)
+            self.order = np.arange(len(index))
+            if shuffle:
+                self.rng.shuffle(self.order)
+
+        def __len__(self):
+            return int(np.ceil(len(self.index) / self.batch_size))
+
+        def __getitem__(self, i):
+            index = self.index[self.order[i * self.batch_size:(i + 1) * self.batch_size]]
+            valid = (index >= 0).astype(np.float32)
+            x = gather(self.features, index)
+            y = {k: gather(v, index)[..., None] for k, v in self.targets.items()}
+            w = {k: gather(v, index) * valid for k, v in self.weights.items()}
+            if not self.as_dict:
+                return x, y["food"], w["food"]
+            return x, y, w
+
+        def on_epoch_end(self):
+            if self.shuffle:
+                self.rng.shuffle(self.order)
+
+    return _SequenceBatches
+
+
+def predict_sequences(models, features: np.ndarray, windows: ets_data.WindowSet,
+                      rows: np.ndarray, length: int, batch_size: int = 32
+                      ) -> np.ndarray:
+    """p(eating) for each of `rows`, from a model that reads sequences.
+
+    Sequences overlap (stride length/4); each window takes its prediction from
+    the sequence in which it sits closest to the centre, so it is judged with
+    as much context on both sides as the recording allows.
+    """
+    if len(rows) == 0:
+        return np.zeros(0, dtype=np.float32)
+    index = sequence_index(sequence_chains(windows, rows), length,
+                           max(1, length // 4))
+    total = np.zeros(len(index) * length, dtype=np.float64)
+    for model in models:
+        chunks = []
+        for start in range(0, len(index), batch_size):
+            output = model(gather(features, index[start:start + batch_size]),
+                           training=False)
+            if isinstance(output, dict):
+                output = output["food"]
+            chunks.append(np.asarray(output).reshape(-1))
+        total += np.concatenate(chunks)
+    total /= len(models)
+
+    flat = index.reshape(-1)
+    distance = np.abs(np.tile(np.arange(length), len(index)) - (length - 1) / 2)
+    keep = flat >= 0
+    flat, distance, probability = flat[keep], distance[keep], total[keep]
+    order = np.lexsort((distance, flat))          # by window, nearest centre first
+    first = np.unique(flat[order], return_index=True)[1]
+    best = dict(zip(flat[order][first], probability[order][first]))
+    return np.asarray([best[int(r)] for r in rows], dtype=np.float64)
+
+
 def cross_validate(
         windows: ets_data.WindowSet,
         transform: Callable[[np.ndarray], np.ndarray],
@@ -227,6 +363,7 @@ def cross_validate(
         threshold_objective: str = "f1",
         max_false_alarms: float = 15.0,
         soft_targets: Optional[np.ndarray] = None,
+        sequence_length: int = 0,
         verbose: bool = True) -> Tuple[List[FoldResult], np.ndarray]:
     """Run participant-level cross-validation and return per-fold results.
 
@@ -237,6 +374,11 @@ def cross_validate(
     `soft_targets`, when given, replaces the 0/1 training target of the eating
     output with the share of each window that is eating. Class weights, the
     validation target and every evaluation still use the 0/1 labels.
+
+    `sequence_length` > 0 means `build_model` returns a model that reads that
+    many consecutive windows at once and outputs one probability per window.
+    Folds, inner participants, thresholds and evaluation are unchanged; only
+    how batches are formed and how each window's probability is read out.
     """
     import tensorflow as tf
 
@@ -348,13 +490,44 @@ def cross_validate(
                     patience=max(3, patience // 3), min_lr=1e-5, verbose=0),
             ]
 
+        if sequence_length:
+            batches = _sequence_batches_class()
+            weights = class_weights(hard_fit)
+            food_target = (windows.y if soft_targets is None
+                           else soft_targets).astype(np.float32)
+            train_targets = {"food": food_target}
+            train_weights = {"food": np.where(windows.y == 1, weights[1],
+                                              weights[0]).astype(np.float32)}
+            val_targets = {"food": windows.y.astype(np.float32)}
+            ones = np.ones(len(windows), dtype=np.float32)
+            val_weights = {"food": ones}
+            if auxiliary:
+                train_targets["chews"] = val_targets["chews"] = chew_target
+                train_weights["chews"] = val_weights["chews"] = ones
+            half = max(1, sequence_length // 2)
+            train_index = sequence_index(sequence_chains(windows, fit_rows),
+                                         sequence_length, half)
+            val_index = sequence_index(sequence_chains(windows, validation_rows),
+                                       sequence_length, half)
+            sequence_batch = max(4, batch_size // 4)
+
         history = None
         for member, member_model in enumerate(models):
-            member_history = member_model.fit(
-                features[fit_rows], targets_fit,
-                validation_data=(features[validation_rows], targets_validation),
-                epochs=epochs, batch_size=batch_size,
-                callbacks=make_callbacks(), verbose=0, **fit_kwargs)
+            if sequence_length:
+                member_history = member_model.fit(
+                    batches(features, train_index, train_targets, train_weights,
+                            sequence_batch, True, seed + index * 100 + member,
+                            auxiliary),
+                    validation_data=batches(features, val_index, val_targets,
+                                            val_weights, sequence_batch, False,
+                                            0, auxiliary),
+                    epochs=epochs, callbacks=make_callbacks(), verbose=0)
+            else:
+                member_history = member_model.fit(
+                    features[fit_rows], targets_fit,
+                    validation_data=(features[validation_rows], targets_validation),
+                    epochs=epochs, batch_size=batch_size,
+                    callbacks=make_callbacks(), verbose=0, **fit_kwargs)
             if history is None:
                 history = member_history
 
@@ -370,6 +543,9 @@ def cross_validate(
             """
             if len(rows) == 0:
                 return np.zeros(0, dtype=np.float32)
+            if sequence_length:
+                return predict_sequences(models, features, windows, rows,
+                                         sequence_length)
             total = np.zeros(len(rows), dtype=np.float64)
             for member_model in models:
                 chunks = []

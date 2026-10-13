@@ -465,7 +465,7 @@ def test_every_configuration_gets_its_own_results_file():
                 ["--threshold-objective", "f0.5"],
                 ["--threshold-objective", "false-alarms"],
                 ["--threshold-objective", "false-alarms", "--max-false-alarms", "10"],
-                ["--soft-labels"]]
+                ["--soft-labels"], ["--sequence", "15"]]
     tags = [t.run_tag(t.normalise_config(parser.parse_args(v))) for v in variants]
     assert len(set(tags)) == len(tags), sorted(tags)
 
@@ -485,6 +485,27 @@ def test_eating_fraction_agrees_with_the_label_and_survives_the_cache():
         path = Path(folder) / "cache.npz"
         ets_data.save_cache(windows, path)
         assert np.array_equal(ets_data.load_cache(path).eating_fraction, fraction)
+
+
+def test_sequences_follow_consecutive_windows_and_cover_every_one():
+    """A sequence must hold windows that really are consecutive in one
+    session - never two participants, never across a recording gap - and
+    every window must land in at least one sequence, or it gets no score."""
+    import ets_train
+    windows = make_windows(8.0, 4.0)
+    rows = np.arange(len(windows))
+    rows = rows[rows != 40]                                  # a gap mid-session
+    chains = ets_train.sequence_chains(windows, rows)
+    assert sum(len(c) for c in chains) == len(rows)
+    for chain in chains:
+        assert len(set(windows.participants[chain])) == 1
+        assert np.allclose(np.diff(windows.starts[chain]), windows.window_seconds)
+    index = ets_train.sequence_index(chains, 15, 7)
+    assert index.shape[1] == 15
+    assert set(index[index >= 0].tolist()) == set(rows.tolist())
+    for sequence in index:
+        real = sequence[sequence >= 0]
+        assert np.all(sequence[len(real):] == -1), "padding only at the end"
 
 
 if __name__ == "__main__":

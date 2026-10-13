@@ -233,8 +233,61 @@ def build_attention_cnn(input_shape, config):
         pooled = layers.GlobalAveragePooling1D(name="average_pool")(features)
 
     shared = layers.Dense(64, activation="relu")(pooled)
-    shared = layers.Dropout(DROPOUT)(shared)
+    shared = layers.Dropout(DROPOUT, name="window_features")(shared)
     return _heads(inputs, shared, config.chew_weight, "food_intake_cnn", config)
+
+
+SEQUENCE_UNITS = 32
+
+
+def build_sequence_model(input_shape, config):
+    """The window model, applied to each of N consecutive windows, followed by
+    a bidirectional GRU that reads the N window summaries in order.
+
+    Each window still gets its own probability, but decided with the windows
+    either side in view: an isolated spike between confident non-eating
+    windows can be discounted, a short real bout kept. Unlike median
+    smoothing, which imposed that rule and erased real short bouts, the GRU is
+    trained, so it learns from the data when the neighbours should matter.
+    The CNN and the GRU are trained together, end to end (the design of
+    Kyritsis et al. 2021: a CNN feature extractor and an LSTM, trained jointly).
+
+    The window's own features are concatenated with the GRU output before
+    the eating head, so the model can fall back on the window alone.
+    """
+    import tensorflow as tf
+    from tensorflow.keras import layers
+
+    window = build_attention_cnn(input_shape, config)
+    encoder = tf.keras.Model(window.inputs,
+                             window.get_layer("window_features").output,
+                             name="window_encoder")
+    inputs = layers.Input(shape=(config.sequence,) + tuple(input_shape),
+                          name="sequence")
+    features = layers.TimeDistributed(encoder, name="per_window")(inputs)
+    context = layers.Bidirectional(
+        layers.GRU(SEQUENCE_UNITS, return_sequences=True), name="sequence_gru")(features)
+    joined = layers.Concatenate()([features, context])
+    food = layers.Dense(1, activation="sigmoid", name="food")(joined)
+
+    # Padded positions at the end of a short chain carry zero sample weight,
+    # so the AUC that early stopping watches must be a WEIGHTED metric.
+    auc = tf.keras.metrics.AUC(name="auc")
+    if config.chew_weight <= 0:
+        model = tf.keras.Model(inputs, food, name="food_intake_sequence")
+        model.compile(optimizer=tf.keras.optimizers.Adam(config.learning_rate),
+                      loss="binary_crossentropy", weighted_metrics=[auc])
+        return model
+    chews = layers.Dense(32, activation="relu")(features)
+    chews = layers.Dense(1, activation="softplus", name="chews")(chews)
+    model = tf.keras.Model(inputs, {"food": food, "chews": chews},
+                           name="food_intake_sequence_multitask")
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(config.learning_rate),
+        loss={"food": "binary_crossentropy", "chews": "mse"},
+        loss_weights={"food": 1.0, "chews": float(config.chew_weight)},
+        weighted_metrics={"food": [auc]})
+    return model
 
 
 def transformer_block(x, heads: int, dropout: float = 0.1):
@@ -405,6 +458,7 @@ def _heads(inputs, shared, chew_weight: float, name: str, config):
 def normalise_config(config):
     """Make the configuration say what will actually run."""
     if config.architecture != "attention-cnn":
+        config.sequence = 0
         config.chew_weight = 0.0
         config.channel_attention = False
         config.pooling = "average"
@@ -455,6 +509,8 @@ def run_tag(config) -> str:
         parts.append(f"inner{config.inner_participants}")
     if config.soft_labels:
         parts.append("soft")
+    if config.sequence:
+        parts.append(f"seq{config.sequence}")
     return "_".join(parts)
 
 
@@ -471,6 +527,8 @@ def describe(config) -> str:
                   else "no chew head")
     if config.soft_labels:
         pieces.append("soft labels")
+    if config.sequence:
+        pieces.append(f"sequence model over {config.sequence} windows")
     return ", ".join(pieces)
 
 
@@ -527,7 +585,8 @@ def run(config) -> Dict:
     config.rebuild_cache = False
     soft_targets = check_soft_labels(config, windows, hop) if config.soft_labels else None
 
-    builder = ARCHITECTURES[config.architecture]
+    builder = (build_sequence_model if config.sequence
+               else ARCHITECTURES[config.architecture])
     auxiliary = config.chew_weight > 0
     repeats: List[Dict] = []
     participant_counts: Dict[str, Dict[str, float]] = {}
@@ -547,7 +606,8 @@ def run(config) -> Dict:
             monitor=config.monitor,
             threshold_objective=config.threshold_objective,
             max_false_alarms=config.max_false_alarms,
-            soft_targets=soft_targets, verbose=True)
+            soft_targets=soft_targets, sequence_length=config.sequence,
+            verbose=True)
 
         participants = ets_train.participant_records(results)
         title = f"{tag}" + (f"  (seed {seed})" if config.repeats > 1 else "")
@@ -634,7 +694,7 @@ CONFIG_KEYS = ("architecture", "input", "window_seconds", "sample_rate",
                "smoothing", "ensemble", "folds", "inner_participants",
                "seed", "repeats", "epochs", "patience", "monitor",
                "augment", "learning_rate", "threshold_objective",
-               "max_false_alarms", "soft_labels")
+               "max_false_alarms", "soft_labels", "sequence")
 
 
 # --------------------------------------------------------------------------- #
@@ -690,6 +750,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="what early stopping watches on the validation "
                         "participants: total loss, or ROC AUC of the eating "
                         "output (threshold-free)")
+    g.add_argument("--sequence", type=int, default=0,
+                   help="read N consecutive windows at once (e.g. 15 = 2 min "
+                        "at 8 s) with a bidirectional GRU over the window "
+                        "model, trained end to end; 0 = off (default)")
     g.add_argument("--soft-labels", action="store_true",
                    help="train on the share of each window that is eating "
                         "instead of 0/1; evaluation is unchanged. Needs a cache "
