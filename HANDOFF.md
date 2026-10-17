@@ -13,6 +13,85 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 17/10/26 — model frozen; leave-one-out results; what is running
+
+**Status.** Contract Activity 6 (run/validate/iterate) is effectively done: the
+approved model is frozen. Everything below is leave-one-subject-out (43
+participants, 10,891 held-out windows), lr 0.0003, early stopping on AUC.
+Next contract items: inference script (Activity 7, due 11/04), meal-level
+metrics (Activity 8, 11/11), paper draft (Activity 9, 12/02).
+
+**Headline numbers (default model, seed 9).** Pooled F1 0.856, accuracy 0.887,
+balanced accuracy 0.881, precision 0.859, recall 0.853, 41.1 false-alarm
+windows per hour of non-eating; median participant F1 0.867. (0.836 / 0.886
+are the fold MEANS, not pooled — an early slide had this wrong.) Confusion:
+TP 3,676, FP 601, FN 633, TN 5,981. Three seeds (9/10/11): F1 0.848–0.860,
+mean 0.855 — this is the noise floor.
+
+**The four findings presented (10/15 lab meeting).**
+1. The model works; every architectural variation is within seed noise.
+2. Time series beats FFT: F1 0.856 vs 0.796, false alarms 41 vs 89/h; at
+   matched false-alarm rates recall is 1.3–2.6x higher (operating curve).
+3. False positives are controllable: 53% of false-alarm windows are adjacent
+   to real eating; sustained false episodes ~0.8/h; a false-alarm budget
+   (15/h, chosen on validation participants) gives 17.0/h on held-out
+   participants, precision 0.925, recall 0.717 (TP 3,088, FP 249, FN 1,221,
+   TN 6,333). Measured in meal sessions, not free living.
+4. Threshold/early stopping on 5 validation participants instead of 2:
+   +0.009 F1 [+0.002, +0.015], 31/43 better, p = 0.004 (3 seeds vs 3 seeds).
+   Gain is recall (0.853 -> 0.874); false alarms 41 -> 44/h.
+
+**Within noise:** average pooling, no channel attention, chew weight 0 or 1,
+1 Transformer layer, 3-model ensemble, augmentation, soft labels (3 seeds:
+-0.002), 4 s windows, 64 Hz. **Worse:** FFT (-0.061), 32 Hz (-0.012), 16 Hz
+(-0.019), 16 s windows (-0.020, borderline; CI includes 0 without the three
+weakest participants). 2 s windows not run under LOSO.
+
+**Error analysis** (`error_breakdown.py`): 40% of errors are at bout edges
+(316 edge FP + 177 edge FN of 1,234); F1 0.912 if edges were forgiven.
+Excluding the three participants below F1 0.55 gives 0.866 (inside the 95%
+interval [0.831, 0.880]) and changes no comparison. Weakest four: AIM147560
+(model barely responds; cause unknown), AIM112400 (fold threshold 0.86 too
+strict), AIM132097 (edges), AIM122571 (short bouts); together they have 2
+false-alarm windows. Fold thresholds range 0.06–0.93 (chosen on 2 people).
+AIM127703 dinner: long high-probability stretches between annotated bouts —
+check the video at ~1.8–3, 11.3–12.3, 15.5–16.3 min for unannotated eating.
+
+**Ground truth recipe:** sample = eating if BOGT (bout) OR BIGT (bite); CHGT
+(chews) is not in the label, only the chew-head target; window = eating if
+>50% of its annotated samples are eating. Preprocessing is per-window z-score
+only — NOT band-passed (the `high_pass` option only subtracts the mean, which
+the z-score does anyway; rename it).
+
+**Running / queued on the lab machine (one at a time, QuickEdit off, no sleep):**
+1. `sequence_run.bat` — `--sequence 15` (bidirectional GRU over 2 min of
+   windows, end to end), 5 inner, 3 seeds, ~12 h. Compare against
+   `..._x3_stopauc_lr0.0003_inner5.json`; check isolated false alarms and
+   false episodes/h in `error_breakdown.py`.
+2. 8 inner participants, 3 seeds (overnight_lane2) — was frozen for a night;
+   confirm `..._x3_stopauc_lr0.0003_inner8.json` exists.
+3. Stripped-down model (no SE, average pooling, chew 0), 5 inner, 3 seeds —
+   answers whether the components matter jointly (ablation was one at a time).
+4. FCN and ResNet baselines with `--folds 5` (LOSO takes 30–55 h each; both
+   weekend LOSO runs were stopped and saved nothing). Compare against the
+   5-fold reference `time_se_attnpool_chew0.2_w8_128hz_5fold_seed9_stopauc_lr0.0003`.
+
+**New scripts this round:** `exclude_participants.py`, `error_breakdown.py`
+(`--threshold`, `--all-participants`), `plot_confusion.py`,
+`plot_results.py --participants`, flags `--soft-labels` (needs
+`--rebuild-cache --cache-dir ets_cache_soft`) and `--sequence N`.
+Demo deck: `docs/presentation/lab_meeting_findings_demo.pptx`.
+
+**Open decisions for Dr. Sazonov:** default threshold vs false-alarm budget
+for the shipped model; paper venue (EMBC is the natural fit), authorship, and
+whether ETS data can be published.
+
+**Reminders:** rotate the DB password and API token that were pasted in chat;
+never write a placeholder `set CFG=` line (the real path is
+`...\study_eating_trajectory\lib_jitai\jitai_config.ini`).
+
+---
+
 ## UPDATE 1/10/26 (later) — first results on all 61 sessions
 
 61 sessions, 43 participants (18 have two sessions), 24.2 h annotated, 9.6 h
