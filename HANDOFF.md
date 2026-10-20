@@ -13,6 +13,43 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 20/10/26 — EVALUATION-GRID BUG FIXED; use results_fixed\ only
+
+`aligned_mask` anchored the non-overlapping scoring grid per PARTICIPANT with
+np.isclose's relative tolerance, so all 18 second sessions were scored on
+their half-overlapping windows (10,891 scored windows instead of 9,133).
+Training, early stopping and thresholds were unaffected; every run shared the
+same windows, so comparisons stayed fair. Fixed in `ets_train.evaluation_grid`
+(per session, absolute tolerance, tested). `rescore_runs.py results\*.json`
+re-scored every run from saved predictions into `results_fixed\`; no session
+was unscored. **All numbers in the 17/10 section below are superseded by these:**
+
+- Default (seed 9): F1 0.854, accuracy 0.887, balanced 0.881, precision 0.854,
+  recall 0.855, 41.4 FA/h; participant F1 median 0.867, mean 0.832.
+  3 seeds: 0.844–0.858 (mean 0.852).
+- 5 inner, 3 seeds: mean F1 0.861 (0.859–0.861); vs 2 inner +0.008
+  [+0.001, +0.016], 30 better / 12 worse, p = 0.004. Without the three
+  weakest participants the gain vanishes (+0.001): it comes from steadier
+  thresholds for them. 8 inner +0.001, sequence model -0.003, soft labels
+  +0.001: none differ from 5 inner.
+- FFT: F1 0.791, 84.0 FA/h, 5 better / 38 worse. Operating curve recall at
+  ~10 FA/h 0.567 vs 0.317; at ~15, 0.643 vs 0.411; at ~5, 0.379 vs 0.172.
+- FA budget 15/h: 17.6 FA/h held out, precision 0.921, recall 0.724, F1
+  0.811. F0.5: 23.7 FA/h, precision 0.901, recall 0.763.
+- Within noise now includes 16 s windows (-0.014 [-0.030, +0.002]). Worse:
+  FFT, 32 Hz (-0.013), 16 Hz (-0.020). 2 s windows (5-fold): 0.826 vs 0.860.
+- Errors: 62% at bout edges (75% of false-alarm windows, 49% of misses);
+  F1 0.944 if edges forgiven; isolated false alarms only 19%; false
+  episodes 8.9/h. (The old "isolated" and "mid-meal" counts were inflated by
+  double-scored windows; AIM130163's "124 mid-meal misses" is now 28.)
+- Excluding the 3 participants below 0.55: 0.854 -> 0.864, inside [0.829, 0.876].
+- Episode level (`episode_metrics.py`): 89.5% of eating episodes detected,
+  99–100% of those >= 32 s, median delay 0 s, 8.9 false episodes/h, episode
+  precision 88.8%; with the FA budget 77.6%, 4.1/h, 93.8%. Merging pauses
+  <= 32 s: 92.8% / 1.7/h (default), 82.9% / 1.2/h (budget).
+
+---
+
 ## UPDATE 17/10/26 — model frozen; leave-one-out results; what is running
 
 **Status.** Contract Activity 6 (run/validate/iterate) is effectively done: the
