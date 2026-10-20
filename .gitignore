@@ -11,3 +11,6 @@ results/
 figures/
 results_summary.csv
 scripts.zip
+models/
+detections/
+results_fixed/

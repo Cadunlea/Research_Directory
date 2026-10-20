@@ -14,6 +14,8 @@ literature behind every design choice are in
 | `rescore_runs.py` | Re-scores finished runs on the corrected per-session evaluation grid (fix of 20/10/26) into `results_fixed\`, from saved predictions; no retraining |
 | `operating_curve.py` | False alarms per hour against recall for finished runs, from their saved predictions; no retraining |
 | `plot_confusion.py` | Confusion matrices of one or more runs side by side (counts and row shares), with precision, recall and false alarms per hour under each |
+| `train_final_model.py` | Trains the one model that ships: all participants, 5 held out for early stopping and the threshold; saves `models\food_intake_final\` (weights + settings) |
+| `detect_eating.py` | Inference: runs the saved model on a participant/study (whole recording or a UTC range) and writes per-window probabilities and eating episodes to CSV; `--compare` scores it against annotations |
 | `episode_metrics.py` | Episode-level results from saved predictions: share of eating episodes detected (by length), delay to first detection, false and edge episodes per hour, episode precision |
 | `spectrum_figure.py` | Mean power spectrum of eating vs non-eating windows per channel, chewing band shaded (explanatory figure, reads the window cache) |
 | `exclude_participants.py` | Pooled metrics with and without the weakest participants (or named ones), against the run's own 95% interval; repeats the paired comparisons without them |
