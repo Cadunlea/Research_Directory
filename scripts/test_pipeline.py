@@ -508,6 +508,21 @@ def test_sequences_follow_consecutive_windows_and_cover_every_one():
         assert np.all(sequence[len(real):] == -1), "padding only at the end"
 
 
+def test_every_session_is_scored_once_however_far_apart():
+    """A participant's second session can be hours or months after the first.
+    Each must be scored on exactly every other window of its own half-hop
+    grid: never all of them (seconds counted twice), never none."""
+    import ets_train
+    first = 1.77e9 + 4 * np.arange(100)
+    for gap in (2 * 3600 + 3.3, 2 * 86400 + 3.3, 30 * 86400 + 1.7, 400 * 86400 + 6.1):
+        starts = np.concatenate([first, 1.77e9 + gap + 4 * np.arange(100)])
+        mask = ets_train.evaluation_grid(np.array(["P"] * 200),
+                                         np.array(["lunch"] * 100 + ["snack"] * 100),
+                                         starts, 8.0, 4.0)
+        assert mask[:100].sum() == 50 and mask[100:].sum() == 50, (gap, mask[100:].sum())
+        assert np.allclose(np.diff(starts[100:][mask[100:]]), 8.0)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, function in sorted(globals().items()):

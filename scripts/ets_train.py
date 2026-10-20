@@ -72,6 +72,33 @@ def describe_device() -> str:
             "TensorFlow >= 2.11 is CPU-only; use WSL2 for GPU)")
 
 
+def evaluation_grid(participants: np.ndarray, studies: np.ndarray,
+                    starts: np.ndarray, window_seconds: float,
+                    hop_seconds: float) -> np.ndarray:
+    """Windows that lie on a non-overlapping grid, set up session by session.
+
+    Each session's grid starts at its own first window. An earlier version
+    anchored one grid per PARTICIPANT, at the participant's first window, and
+    tested membership with np.isclose's default relative tolerance. For a
+    participant's second session, recorded hours or days later, the offset in
+    window units is in the thousands, so the relative tolerance grew to whole
+    windows: depending on the gap, a second session was scored on all of its
+    overlapping windows, on none, or on every other one. The grid is now per
+    session with an absolute tolerance.
+    """
+    if abs(hop_seconds - window_seconds) < 1e-9:
+        return np.ones(len(starts), dtype=bool)
+    keys = np.char.add(np.char.add(np.asarray(participants).astype(str), "|"),
+                       np.asarray(studies).astype(str))
+    mask = np.zeros(len(starts), dtype=bool)
+    for key in np.unique(keys):
+        rows = np.flatnonzero(keys == key)
+        order = rows[np.argsort(starts[rows])]
+        steps = (starts[order] - starts[order[0]]) / window_seconds
+        mask[order[np.abs(steps - np.round(steps)) < 1e-3]] = True
+    return mask
+
+
 def aligned_mask(windows: ets_data.WindowSet) -> np.ndarray:
     """Windows that lie on a NON-OVERLAPPING grid.
 
@@ -80,18 +107,8 @@ def aligned_mask(windows: ets_data.WindowSet) -> np.ndarray:
     the result, and would make runs trained at different hops score on
     different windows. So evaluation always uses this subset.
     """
-    if abs(windows.hop_seconds - windows.window_seconds) < 1e-9:
-        return np.ones(len(windows), dtype=bool)
-
-    mask = np.zeros(len(windows), dtype=bool)
-    for participant in np.unique(windows.participants):
-        rows = np.flatnonzero(windows.participants == participant)
-        order = rows[np.argsort(windows.starts[rows])]
-        origin = windows.starts[order[0]]
-        offsets = windows.starts[order] - origin
-        steps = np.round(offsets / windows.window_seconds, 6)
-        mask[order[np.isclose(steps, np.round(steps))]] = True
-    return mask
+    return evaluation_grid(windows.participants, windows.studies, windows.starts,
+                           windows.window_seconds, windows.hop_seconds)
 
 
 @dataclass

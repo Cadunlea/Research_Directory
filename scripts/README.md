@@ -11,6 +11,7 @@ literature behind every design choice are in
 |---|---|
 | `train_food_intake.py` | The model, and every experiment for the paper as a flag (table below) |
 | `compare_runs.py` | One table of every run, each paired against a reference: F1 change with 95% interval, participants better/worse, Wilcoxon p. Writes `results_summary.csv` |
+| `rescore_runs.py` | Re-scores finished runs on the corrected per-session evaluation grid (fix of 20/10/26) into `results_fixed\`, from saved predictions; no retraining |
 | `operating_curve.py` | False alarms per hour against recall for finished runs, from their saved predictions; no retraining |
 | `plot_confusion.py` | Confusion matrices of one or more runs side by side (counts and row shares), with precision, recall and false alarms per hour under each |
 | `episode_metrics.py` | Episode-level results from saved predictions: share of eating episodes detected (by length), delay to first detection, false and edge episodes per hour, episode precision |
