@@ -9,9 +9,10 @@ corrections:
      duration, treating it as the end, which drew the sensor 8 s early
      against the annotation (measured on this database: +0.1 s lag read as
      start, -7.9 s read as end, on all 20 sessions checked).
-  2. Time is handled as POSIX seconds (UTC) throughout, and drawn in this
-     computer's local time, which follows daylight saving. The original
-     added a fixed +5 h, which is right only in summer.
+  2. Time is handled as POSIX seconds throughout and drawn as the recorded
+     clock (the database timestamps, formatted as UTC like the rest of the
+     project). The original added a fixed +5 h, right only in summer; the
+     annotation exports turn out to share the database's clock (offset 0).
   3. Only the annotated stretch (plus --padding minutes) is loaded, and only
      the packets inside it. The original loaded every packet of the
      participant and spanned all of them, which for a participant with two
@@ -218,7 +219,11 @@ def main() -> int:
     elif args.windows:
         model = model_from_windows(Path(args.windows))
 
-    local = lambda t: [datetime.fromtimestamp(x) for x in np.atleast_1d(t)]  # noqa: E731
+    # Drawn as the recorded clock (the database's timestamps formatted as UTC,
+    # the project convention in ets_data.posix2datetime). Converting to this
+    # computer's time zone shifted AIM147560's 09:17 lunch-hour clock to 04:17.
+    local = lambda t: [datetime.fromtimestamp(x, tz=timezone.utc).replace(tzinfo=None)  # noqa: E731
+                       for x in np.atleast_1d(t)]
     sensor_t = start + np.arange(len(sensor)) / ets_data.SENSOR_FS
     step = max(1, len(sensor) // 60000)          # keep the line plots light
     eating = (bout > 0) | (bite > 0)
@@ -263,7 +268,7 @@ def main() -> int:
         axis.set_ylabel(f"Model\np(eating)\n{label}", fontsize=9)
 
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-    axes[-1].set_xlabel("Clock time (this computer's time zone)")
+    axes[-1].set_xlabel("Recorded clock time (database timestamps)")
     axes[0].set_title(f"{args.participant}  -  {Path(args.annotation).name}.  Shaded: annotated "
                       f"eating (chew bout or bite). Gaps: no sensor data."
                       + ("  Dashed: model threshold." if model else ""),
