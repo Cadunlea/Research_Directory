@@ -1,20 +1,26 @@
 r"""
-session_type_analysis.py - does performance depend on the kind of meal?
+session_type_analysis.py - does performance depend on the kind of session?
 
-Lunch sessions in the ETS study are group meals with conversation; snacks are
-eaten alone. This scores a finished run per session and per meal type, and
-tests whether one type (default: lunch) differs from the rest:
+Scores a finished run per session and per meal type, and tests whether one
+group of sessions differs from the rest:
 
   1. pooled F1, precision, recall and bout structure per meal type
      (median length of annotated eating runs, in windows of 8 s);
-  2. per-session F1 of that type against all other sessions
+  2. per-session F1 of the group against all other sessions
      (Mann-Whitney U, sessions independent);
-  3. the fairer comparison: participants who have BOTH that meal type and
-     another session. Each is their own control, which removes differences
-     between people (paired Wilcoxon on per-participant F1 differences).
+  3. the fairer comparison: participants who have a session in BOTH groups.
+     Each is their own control, which removes differences between people
+     (paired Wilcoxon on per-participant F1 differences).
+
+The group is a meal type (--type, default lunch) or, with --groups, the
+sessions eaten with other people. Meal type is not a stand-in for group
+setting: some lunches were eaten alone. --groups is a CSV with columns
+participant, study, group (1 with others, 0 alone); sessions missing from it
+are left out of the group comparison.
 
     python session_type_analysis.py results_fixed\<run>.json
     python session_type_analysis.py results_fixed\<run>.json --type ETS_dinner
+    python session_type_analysis.py results_fixed\<run>.json --groups session_setting.csv
 
 Reads the saved predictions (first seed); no database, no retraining.
 Writes results_fixed\<run>_sessions.csv with one row per session.
@@ -42,12 +48,48 @@ def counts(y, p):
             "fn": int(np.sum(y & ~p)), "tn": int(np.sum(~y & ~p))}
 
 
+def compare_groups(rows, in_group, name: str, rest: str) -> None:
+    """Per-session and within-participant F1 tests of one group of sessions."""
+    from scipy.stats import mannwhitneyu, wilcoxon
+
+    inside = [r for r in rows if in_group(r) and r["bouts"]]
+    outside = [r for r in rows if not in_group(r) and r["bouts"]]
+    if not inside or not outside:
+        print(f"\n  no sessions on one side of {name} vs {rest}")
+        return
+    u = mannwhitneyu([r["f1"] for r in inside], [r["f1"] for r in outside])
+    print(f"\n  {name} sessions vs {rest} sessions (per-session F1):")
+    print(f"    median {np.median([r['f1'] for r in inside]):.3f} ({len(inside)} sessions) vs "
+          f"{np.median([r['f1'] for r in outside]):.3f} ({len(outside)}); "
+          f"Mann-Whitney p = {u.pvalue:.3f}")
+
+    paired = []
+    for person in sorted({r["participant"] for r in inside}):
+        mine = [r for r in inside if r["participant"] == person]
+        other = [r for r in outside if r["participant"] == person]
+        if other:
+            paired.append((person, float(np.mean([r["f1"] for r in mine])),
+                           float(np.mean([r["f1"] for r in other])),
+                           [r["study"] for r in mine], [r["study"] for r in other]))
+    if len(paired) < 5:
+        print(f"\n  only {len(paired)} participants have both {name} and {rest} sessions; "
+              f"too few for a paired test")
+        return
+    diff = np.array([a - b for _, a, b, _, _ in paired])
+    w = wilcoxon(diff)
+    print(f"\n  same participants, {name} vs {rest} ({len(paired)} participants):")
+    print(f"    median F1 difference {np.median(diff):+.3f}; {int(np.sum(diff < 0))} worse "
+          f"{name}, {int(np.sum(diff > 0))} better; Wilcoxon p = {w.pvalue:.3f}")
+    for person, a, b, mine, other in paired:
+        print(f"      {person}  {'/'.join(mine)} {a:.3f}   {'/'.join(other)} {b:.3f}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("run")
     parser.add_argument("--type", default="ETS_lunch", help="meal type to test against the rest")
+    parser.add_argument("--groups", help="CSV of participant, study, group (1 with others, 0 alone)")
     args = parser.parse_args()
-    from scipy.stats import mannwhitneyu, wilcoxon
 
     path = Path(args.run)
     with open(path, encoding="utf-8") as handle:
@@ -88,33 +130,17 @@ def main() -> int:
               f"{sum(r['tp'] + r['fn'] for r in group) / sum(r['windows'] for r in group):>8.0%}"
               f"{bout * 8:>11.0f} s")
 
-    inside = [r for r in rows if r["study"] == args.type and r["bouts"]]
-    outside = [r for r in rows if r["study"] != args.type and r["bouts"]]
-    if inside and outside:
-        u = mannwhitneyu([r["f1"] for r in inside], [r["f1"] for r in outside])
-        print(f"\n  {args.type} sessions vs all other sessions (per-session F1):")
-        print(f"    median {np.median([r['f1'] for r in inside]):.3f} ({len(inside)} sessions) vs "
-              f"{np.median([r['f1'] for r in outside]):.3f} ({len(outside)}); "
-              f"Mann-Whitney p = {u.pvalue:.3f}")
-
-    paired = []
-    for person in sorted({r["participant"] for r in inside}):
-        mine = [r for r in inside if r["participant"] == person]
-        other = [r for r in outside if r["participant"] == person]
-        if other:
-            paired.append((person, mine[0]["f1"], float(np.mean([r["f1"] for r in other])),
-                           [r["study"] for r in other]))
-    if len(paired) >= 5:
-        diff = np.array([a - b for _, a, b, _ in paired])
-        w = wilcoxon(diff)
-        print(f"\n  same participants, {args.type} vs their other session ({len(paired)} participants):")
-        print(f"    median F1 difference {np.median(diff):+.3f}; {int(np.sum(diff < 0))} worse at "
-              f"{args.type}, {int(np.sum(diff > 0))} better; Wilcoxon p = {w.pvalue:.3f}")
-        for person, a, b, other in paired:
-            print(f"      {person}  {args.type} {a:.3f}   {'/'.join(other)} {b:.3f}")
+    if args.groups:
+        with open(args.groups, newline="", encoding="utf-8-sig") as handle:
+            setting = {(r["participant"].strip(), r["study"].strip()): int(r["group"])
+                       for r in csv.DictReader(handle) if r["group"].strip()}
+        for r in rows:
+            r["group"] = setting.get((r["participant"], r["study"]), "")
+        known = [r for r in rows if r["group"] != ""]
+        print(f"\n  --groups: setting known for {len(known)} of {len(rows)} sessions")
+        compare_groups(known, lambda r: r["group"] == 1, "with others", "alone")
     else:
-        print(f"\n  only {len(paired)} participants have {args.type} and another session; "
-              f"too few for a paired test")
+        compare_groups(rows, lambda r: r["study"] == args.type, args.type, "other")
 
     out = path.with_name(f"{record['tag']}_sessions.csv")
     with open(out, "w", newline="", encoding="utf-8") as handle:
