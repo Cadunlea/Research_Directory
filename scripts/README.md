@@ -18,6 +18,7 @@ literature behind every design choice are in
 | `detect_eating.py` | Inference: runs the saved model on a participant/study (whole recording or a UTC range) and writes per-window probabilities and eating episodes to CSV; `--compare` scores it against annotations |
 | `episode_metrics.py` | Episode-level results from saved predictions: share of eating episodes detected (by length), delay to first detection, false and edge episodes per hour, episode precision |
 | `spectrum_figure.py` | Mean power spectrum of eating vs non-eating windows per channel, chewing band shaded (explanatory figure, reads the window cache) |
+| `plot_sensor_vs_annotations.py` | One session on one time axis: raw accelerometer and optical signals, the annotation export (eating, chew bout, bite, chew) and optionally the model probability (`--run` held out, or `--windows` from detect_eating.py). Packet timestamps read as starts; annotation clock aligned to UTC from the sensor packets |
 | `exclude_participants.py` | Pooled metrics with and without the weakest participants (or named ones), against the run's own 95% interval; repeats the paired comparisons without them |
 | `error_breakdown.py` | Sorts every wrong window of a run by its neighbours (bout edge, mid-meal, short bout; isolated or sustained false alarms), with the F1 if each kind were fixed and false episodes per hour |
 | `plot_results.py` | Grayscale Arial-11 figures: per-participant F1, prediction timelines, run comparison |
