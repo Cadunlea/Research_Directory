@@ -31,11 +31,12 @@ pres.defineSlideMaster({
 
 const BULLET = 16;
 function bullets(slide, items, opts) {
+  const size = opts.fontSize || BULLET;
   const runs = items.map((it, i) => {
     const sub = typeof it === "object" && it.sub;
     const text = typeof it === "object" ? it.text : it;
     return { text, options: { bullet: sub ? { indent: 18 } : true, indentLevel: sub ? 1 : 0,
-      fontSize: sub ? BULLET - 2 : BULLET, color: C.text2,
+      fontSize: sub ? size - 2 : size, color: C.text2,
       paraSpaceAfter: 8, breakLine: i < items.length - 1 } };
   });
   slide.addText(runs, Object.assign({ isTextBox: true, valign: "top", margin: 0.05 }, opts));
@@ -132,17 +133,12 @@ s.addNotes("Average spectra over all 8 s windows. The accelerometers barely diff
 // 6 ---------------------------------------------------------------------
 pres.addSection({ title: "Analysis" });
 s = add("Analysis", "Performance by Meal Type");
-table(s, ["Meal", "Sessions", "F1", "Recall"], [
-  ["Breakfast", "8", "0.882", "0.909"], ["Dinner", "12", "0.884", "0.931"],
-  [{ text: "Lunch", options: { bold: true } }, "18", { text: "0.829", options: { bold: true } }, { text: "0.819", options: { bold: true } }],
-  ["Snack", "23", "0.877", "0.891"],
-], { x: 0.45, y: 1.2, w: 4.6, rowH: 0.45 }, [1.6, 1.0, 1.0, 1.0]);
+s.addImage({ path: "meal_types.png", x: 0.8, y: 0.95, w: 8.4, h: 8.4 * 880 / 2200, altText: "F1 per session by meal type, and lunch versus the same participant's other meal" });
 bullets(s, [
-  "Lunches score lower than other meals: median session F1 0.815 vs 0.890 (p = 0.009)",
-  "The drop is mostly recall: eating at lunch gets missed more",
-  "Same participants: 7 of 9 did worse at lunch (p = 0.10, too few people)",
+  "Lunches score lower: median F1 0.815 vs 0.890 for other meals (p = 0.009); the drop is mostly missed eating (recall 0.82)",
   "Some lunches were solo, so this is not yet a group-eating result; asked Siavash where session setting is recorded",
-], { x: 5.4, y: 1.15, w: 4.2, h: 3.9 });
+], { x: 0.8, y: 4.45, w: 8.4, h: 0.85, fontSize: 14 });
+s.addNotes("Right panel: 9 participants with a lunch and another meal; 7 of 9 lower at lunch, median difference -0.081, Wilcoxon p = 0.10 (too few people to be significant). The two that improved had their weakest session at the other meal. Snack shows 22 sessions: AIM125068's snack has no annotated eating, so no F1. Pooled: breakfast 0.882, dinner 0.884, lunch 0.829, snack 0.877.");
 
 // 7 ---------------------------------------------------------------------
 s = add("Analysis", "Next Steps");
