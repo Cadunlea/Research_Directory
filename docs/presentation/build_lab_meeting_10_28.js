@@ -92,9 +92,11 @@ table(s, ["Held-out participant", "Meal", "F1"], [
   ["AIM128555", "Breakfast", "0.844"], ["AIM128555", "Snack", "0.915"],
   ["AIM146271", "Lunch", "0.886"], ["AIM147560", "Breakfast", "0.667"],
   [{ text: "Median", options: { bold: true } }, "", { text: "0.854", options: { bold: true } }],
-], { x: 0.45, y: 1.1, w: 4.6, rowH: 0.36 }, [2.1, 1.4, 1.1]);
+], { x: 0.45, y: 1.45, w: 4.6, rowH: 0.36 }, [2.1, 1.4, 1.1]);
+s.addText("Scored: only the 8 sessions the model never trained on (the other 53 would be inflated)", {
+  isTextBox: true, x: 0.45, y: 1.0, w: 4.6, h: 0.4, fontSize: 11, color: C.text2, margin: 0, valign: "top" });
 bullets(s, [
-  "One command runs the model on all 61 recordings (about 1 s each)",
+  "One command ran the model on all 61 recordings in the database (about 1 s each)",
   "Saves every eating episode (start, end, duration, chews) and one row per meal",
   "Can be stopped and restarted; finished recordings are skipped",
   "Participants the final model never saw: median F1 0.854, close to the leave-one-out 0.862",
