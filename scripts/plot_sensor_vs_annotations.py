@@ -156,7 +156,7 @@ def model_from_run(path: Path, participant: str):
             float(data["window_seconds"]), "held out (leave-one-out)")
 
 
-def model_from_windows(path: Path):
+def model_from_windows(path: Path, model_dir: Path):
     with open(path, encoding="utf-8") as handle:
         rows = [r for r in csv.DictReader(handle) if r["probability"]]
     t = lambda s: datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(  # noqa: E731
@@ -164,7 +164,13 @@ def model_from_windows(path: Path):
     starts = np.array([t(r["start_utc"]) for r in rows])
     p = np.array([float(r["probability"]) for r in rows])
     eating = np.array([int(r["eating"]) for r in rows])
-    threshold = float(p[eating == 1].min()) if eating.any() else np.nan
+    # The model's own threshold; the windows file only has the decisions, and
+    # the lowest probability called eating is above the threshold, not on it.
+    if (model_dir / "model.json").exists():
+        with open(model_dir / "model.json", encoding="utf-8") as handle:
+            threshold = float(json.load(handle)["threshold"])
+    else:
+        threshold = np.nan
     return (starts, p, np.full(len(p), threshold),
             t(rows[0]["end_utc"]) - starts[0], "final model")
 
@@ -178,6 +184,8 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--run", help="leave-one-out result JSON (held-out model panel)")
     source.add_argument("--windows", help="detect_eating.py windows CSV (final-model panel)")
+    parser.add_argument("--model", default=str(Path("models") / "food_intake_final"),
+                        help="model folder whose threshold is drawn with --windows")
     parser.add_argument("--padding", type=float, default=2.0, help="minutes either side (default 2)")
     parser.add_argument("--utc-offset", type=int, default=None,
                         help="hours of the annotation clock relative to UTC (Central: -5 summer, -6 winter)")
@@ -217,7 +225,7 @@ def main() -> int:
     if args.run:
         model = model_from_run(Path(args.run), args.participant)
     elif args.windows:
-        model = model_from_windows(Path(args.windows))
+        model = model_from_windows(Path(args.windows), Path(args.model))
 
     # Drawn as the recorded clock (the database's timestamps formatted as UTC,
     # the project convention in ets_data.posix2datetime). Converting to this
