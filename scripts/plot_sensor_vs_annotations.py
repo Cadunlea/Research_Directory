@@ -36,6 +36,8 @@ USAGE
     python plot_sensor_vs_annotations.py --config "%CFG%" --annotation "C:\...\AIM147560_annotation_v01.csv" --participant AIM147560 --run results_fixed\time_se_attnpool_chew0.2_w8_128hz_loso_seed9_stopauc_lr0.0003.json
     ... --windows detections\AIM147560_ETS_lunch_windows.csv    (final-model output instead)
     ... --show                                                  (also open a window)
+    python plot_sensor_vs_annotations.py --config "%CFG%" --participant AIM146271 --study ETS_lunch --windows detections\AIM146271_ETS_lunch_windows.csv
+                                        (annotations from the database, no CSV needed)
 
 Writes figures\sensor_vs_annotations_<participant>_<file>.png and .pdf
 (grayscale, Arial 11).
@@ -84,6 +86,22 @@ def read_annotation(path: Path):
     track = lambda name: np.array([float(r.get(name) or 0) for r in rows])  # noqa: E731
     return (np.asarray(stamps), track("Chew Bout"), track("Bite"),
             track("Chew Count"))
+
+
+def annotation_from_database(conn, participant: str, study: str):
+    """The same four arrays as read_annotation, from the database's ground
+    truth (BOGT, BIGT, CHGT), over the session's annotated stretch. These
+    timestamps are already on the database clock."""
+    sessions = [s for s in ets_data.load_sessions(conn, [participant]) if s.study == study]
+    if not sessions:
+        raise SystemExit(f"no annotations in the database for {participant}/{study}")
+    session = sessions[0]
+    span = session.annotated_range()
+    if span is None:
+        raise SystemExit(f"{participant}/{study}: annotations are all missing")
+    lo, hi = span[0], span[1] + 1
+    t = session.day_start + np.arange(lo, hi) / session.frequency
+    return t, session.bout[lo:hi], session.bite[lo:hi], session.chew[lo:hi]
 
 
 def packet_times(conn, participant: str) -> np.ndarray:
@@ -179,8 +197,10 @@ def model_from_windows(path: Path, model_dir: Path):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ets_data.add_database_arguments(parser)
-    parser.add_argument("--annotation", required=True, help="annotation CSV (bin_timecode, Chew Count, Chew Bout, Bite)")
+    parser.add_argument("--annotation", help="annotation CSV (bin_timecode, Chew Count, Chew Bout, Bite)")
     parser.add_argument("--participant", required=True)
+    parser.add_argument("--study", help="read the annotations from the database instead "
+                                        "of a CSV, for this session (e.g. ETS_lunch)")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--run", help="leave-one-out result JSON (held-out model panel)")
     source.add_argument("--windows", help="detect_eating.py windows CSV (final-model panel)")
@@ -203,13 +223,20 @@ def main() -> int:
                          "font.size": 11, "axes.spines.top": False,
                          "axes.spines.right": False})
 
-    naive, bout, bite, chew = read_annotation(Path(args.annotation))
+    if bool(args.annotation) == bool(args.study):
+        parser.error("give either --annotation (a CSV) or --study (from the database)")
+    source = Path(args.annotation).stem if args.annotation else f"{args.study}_database"
     conn = ets_data.connect(args)
     try:
-        packets = packet_times(conn, args.participant)
-        if not len(packets):
-            raise SystemExit(f"no XYZO packets for {args.participant}")
-        offset = args.utc_offset if args.utc_offset is not None else utc_offset_hours(naive, packets)
+        if args.annotation:
+            naive, bout, bite, chew = read_annotation(Path(args.annotation))
+            packets = packet_times(conn, args.participant)
+            if not len(packets):
+                raise SystemExit(f"no XYZO packets for {args.participant}")
+            offset = args.utc_offset if args.utc_offset is not None else utc_offset_hours(naive, packets)
+        else:
+            naive, bout, bite, chew = annotation_from_database(conn, args.participant, args.study)
+            offset = 0
         ann_t = naive - offset * 3600
         start = ann_t[0] - args.padding * 60
         end = ann_t[-1] + 0.1 + args.padding * 60
@@ -217,7 +244,7 @@ def main() -> int:
     finally:
         conn.close()
     print(f"annotation clock = UTC{offset:+d} h"
-          f"{'' if args.utc_offset is not None else ' (found from the sensor packets)'}; "
+          f"{' (database)' if args.study else '' if args.utc_offset is not None else ' (found from the sensor packets)'}; "
           f"{(ann_t[-1] - ann_t[0]) / 60:.1f} min annotated, "
           f"{np.mean(~np.isnan(sensor[:, 3])):.0%} of the plotted time has sensor data")
 
@@ -277,14 +304,14 @@ def main() -> int:
 
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
     axes[-1].set_xlabel("Recorded clock time (database timestamps)")
-    axes[0].set_title(f"{args.participant}  -  {Path(args.annotation).name}.  Shaded: annotated "
+    axes[0].set_title(f"{args.participant}  -  {source}.  Shaded: annotated "
                       f"eating (chew bout or bite). Gaps: no sensor data."
                       + ("  Dashed: model threshold." if model else ""),
                       loc="left", fontsize=10)
     figure.tight_layout()
 
     out = Path(args.out) if args.out else (
-        Path("figures") / f"sensor_vs_annotations_{args.participant}_{Path(args.annotation).stem}")
+        Path("figures") / f"sensor_vs_annotations_{args.participant}_{source}")
     out.parent.mkdir(parents=True, exist_ok=True)
     for suffix in (".png", ".pdf"):
         figure.savefig(out.with_suffix(suffix), dpi=200)

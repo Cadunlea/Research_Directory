@@ -13,6 +13,32 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 28/10/26 — whole-database inference, chews per meal
+
+- Final model trained (`models\food_intake_final`): threshold 0.750, best
+  epoch 3/15; validation AIM146271, AIM128555, AIM109345, AIM147560, AIM116725.
+  Held-out demos: AIM146271/ETS_lunch F1 0.886 (P 0.925, R 0.849);
+  AIM147560/ETS_breakfast F1 0.667 (P 1.00, R 0.50; soft food).
+- `process_database.py`: every recording with sensor data -> per-recording
+  windows/episodes CSVs, `all_episodes.csv` (the table to write back to the
+  database once Siavash names the table and format) and `sessions.csv`
+  (incl. F1 and chews vs annotation where annotated, in_training flag).
+  Resumable; `--list` first.
+- Episodes now carry the chew head's count and chewing rate (chews per
+  minute of eating windows). `plot_meals.py` draws eating time, chews and
+  chewing rate per meal, and `chew_check` (model vs annotated chews per meal,
+  held-out vs trained-on). Chews are unvalidated until chew_check is run.
+- `model.json` now records `chew_scale`; older models recompute it from the
+  window cache (same value).
+- `plot_sensor_vs_annotations.py --study ETS_lunch` reads the annotations
+  from the database (no CSV needed). The `--windows` threshold line now reads
+  model.json (it was drawn at the lowest eating probability).
+- Lunch vs other meals: per-session median F1 0.815 vs 0.890 (p = 0.009);
+  some lunches were solo, so this is NOT a group-eating result. Group vs
+  solo needs a per-session setting (`session_type_analysis.py --groups`).
+
+---
+
 ## UPDATE 20/10/26 — EVALUATION-GRID BUG FIXED; use results_fixed\ only
 
 `aligned_mask` anchored the non-overlapping scoring grid per PARTICIPANT with

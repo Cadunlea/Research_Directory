@@ -82,6 +82,7 @@ def train(config) -> Path:
     y_fit = hard_fit.astype(np.float32)
     y_validation = windows.y[validation_rows].astype(np.float32)
     auxiliary = config.chew_weight > 0
+    chew_scale = None
     if auxiliary:
         chew_scale = float(np.percentile(windows.chews, 99)) or 1.0
         chews = (windows.chews / chew_scale).astype(np.float32)
@@ -132,6 +133,8 @@ def train(config) -> Path:
         "input_shape": list(features.shape[1:]),
         "threshold": float(threshold),
         "threshold_objective": config.threshold_objective,
+        # The chew output is chews per window divided by this.
+        "chew_scale": chew_scale,
         "max_false_alarms": config.max_false_alarms,
         "validation_participants": [str(p) for p in validation],
         "training_participants": [str(p) for p in participants
