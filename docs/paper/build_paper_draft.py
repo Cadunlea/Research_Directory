@@ -472,9 +472,8 @@ para("A compact convolutional network operating on raw AIM-2 signals detected ea
      "whether eating in groups explains the lower detection at lunch.")
 
 heading("Acknowledgment")
-para("This work was supported by the Randall Research Scholars Program at The University of "
-     "Alabama [[confirm wording and any grant numbers]]. The authors thank Kenzy Nguyen for "
-     "annotation [[confirm]].")
+para("[[Funding source and grant number for the ETS study: ask Dr. Sazonov.]] The authors "
+     "thank Kenzy Nguyen for annotation [[confirm]].")
 
 heading("References")
 for i, key in enumerate(ORDER, 1):

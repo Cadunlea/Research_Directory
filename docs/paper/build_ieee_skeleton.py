@@ -137,8 +137,8 @@ ACK = [("The author thanks Kenzy Nguyen for data annotation and Siavash Esfandia
        ("author(s)", True), (" wrote the manuscript and ", False), ("take(s)", True),
        (" full responsibility for its content.", False)]
 
-FUNDING = ("Funding: Randall Research Scholars Program; ETS study grant and number "
-           "(confirm with Dr. Sazonov).")
+FUNDING = ("Funding source and grant number for the ETS study: ask Dr. Sazonov. "
+           "If there is none, delete this box.")
 
 # Each reference as (text, italic) runs; venue names are italic.
 REFERENCES = [
