@@ -109,9 +109,9 @@ s = add("Results", "Literature Check and Questions");
 bullets(s, [
   "Farooq and Sazonov 2016: chew count and chewing rate from a piezoelectric jaw sensor (15% chew-count error)",
   "Chew counting annotation agreement measured before (intra-class correlation 0.988, 3 raters)",
-  "So the paper’s new parts: agreement on eating windows (F1 0.91), where errors occur, rate from the AIM-2 optical rhythm",
+  "Likely new in this paper: agreement on eating windows (F1 0.91), where errors occur, rate from the AIM-2 optical rhythm (still checking the AIM-2 papers)",
 ], { x: 0.45, y: 1.15, w: 5.0, h: 3.9 });
-s.addShape(pres.ShapeType.rect, { x: 5.8, y: 1.15, w: 3.75, h: 3.4, fill: { color: "F2F2F2" }, line: { color: "F2F2F2" }, objectName: "questions card" });
+s.addShape(pres.ShapeType.rect, { x: 5.8, y: 1.15, w: 3.75, h: 3.0, fill: { color: "F2F2F2" }, line: { color: "F2F2F2" }, objectName: "questions card" });
 s.addText("Questions", { isTextBox: true, x: 6.0, y: 1.3, w: 3.4, h: 0.45, fontSize: 18, bold: true, color: "000000", margin: 0 });
 bullets(s, [
   "Author list and order",
