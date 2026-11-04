@@ -533,9 +533,11 @@ def test_episode_chews_skip_the_bridged_pauses():
     chews = np.array([9, 6, 6, 50, 50, 6, 6, 9, 9, 9], dtype=float)
     found = episodes(starts, eating, 8.0, merge_gap=16.0, min_seconds=0.0)
     assert len(found) == 1
-    row = episode_rows(starts, np.full(10, 0.9), chews, eating, found, 8.0)[0]
+    rates = np.array([0, 80, 90, 0, 0, 100, 110, 0, 0, 0], dtype=float)
+    row = episode_rows(starts, np.full(10, 0.9), chews, rates, eating, found, 8.0)[0]
     assert row["chews"] == "24" and row["windows"] == 6, row
     assert row["chews_per_min"] == f"{24 / (4 * 8 / 60):.1f}", row
+    assert row["chews_per_min_optical"] == "95.0", row
 
 if __name__ == "__main__":
     failures = 0

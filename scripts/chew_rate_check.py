@@ -41,41 +41,9 @@ import matplotlib.pyplot as plt                                 # noqa: E402
 
 import ets_data                                                 # noqa: E402
 import ets_train                                                # noqa: E402
+from chew_rate import BAND, optical, peak_rate, spectral_rate  # noqa: E402,F401
 
-BAND = (0.94, 2.17)             # Hz, natural chewing (Po et al. 2011)
-PAD = 8192                      # FFT length: interpolates the 0.125 Hz bins
 INK, MID = "#222222", "#777777"
-
-
-def optical(X: np.ndarray) -> np.ndarray:
-    """Optical channel, missing samples set to the window mean, mean removed."""
-    sig = X[:, :, ets_data.OPTICAL_CHANNEL].astype(float)
-    valid = sig != ets_data.MISSING
-    means = np.where(valid, sig, 0).sum(1) / np.maximum(valid.sum(1), 1)
-    sig = np.where(valid, sig, means[:, None])
-    return sig - sig.mean(1, keepdims=True)
-
-
-def spectral_rate(sig: np.ndarray, fs: float) -> np.ndarray:
-    """Chews per minute per window, from the band's strongest frequency."""
-    spectrum = np.abs(np.fft.rfft(sig * np.hanning(sig.shape[1]), n=PAD, axis=1))
-    freqs = np.fft.rfftfreq(PAD, 1 / fs)
-    band = (freqs >= BAND[0]) & (freqs <= BAND[1])
-    return 60 * freqs[band][np.argmax(spectrum[:, band], axis=1)]
-
-
-def peak_rate(sig: np.ndarray, fs: float) -> np.ndarray:
-    """Chews per minute per window, from peaks of the band-passed signal."""
-    from scipy.signal import butter, filtfilt, find_peaks
-    b, a = butter(2, BAND, btype="band", fs=fs)
-    filtered = filtfilt(b, a, sig, axis=1)
-    seconds = sig.shape[1] / fs
-    gap = int(fs / BAND[1])
-    out = np.empty(len(sig))
-    for i, row in enumerate(filtered):
-        peaks, _ = find_peaks(row, distance=gap, prominence=0.5 * np.std(row))
-        out[i] = 60 * len(peaks) / seconds
-    return out
 
 
 def summary(true: np.ndarray, est: np.ndarray) -> dict:

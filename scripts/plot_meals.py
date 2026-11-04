@@ -10,16 +10,19 @@ figures, grayscale, Arial 11:
                             rate (chews per minute of eating). Where the
                             session is annotated, the annotated value is
                             drawn over the bar as an open circle.
-    chew_check.png / .pdf   the model's chews and chewing rate per meal
-                            against the annotated ones, for annotated
-                            sessions, both over the annotated stretch (the
-                            model's from the windows it called eating). Filled: participants the model never
-                            trained on; open: participants it trained on
+    chew_check.png / .pdf   against the annotations, for annotated sessions,
+                            over the annotated stretch and the windows the
+                            model called eating: chews per meal and chewing
+                            rate from the model's chew output, and chewing
+                            rate from the optical rhythm (chew_rate.py).
+                            Filled: participants the model never trained
+                            on; open: participants it trained on
                             (optimistic). Printed: correlation and median
-                            error for each group.
+                            error for each group, and for rates the error
+                            of giving every meal the same rate.
 
-Check chew_check before quoting chew numbers: the chew output was an
-auxiliary training target, never validated on its own.
+The chew output's count follows the annotations but its rate does not; use
+the optical rate for chewing rate.
 
 USAGE
 -----
@@ -84,15 +87,26 @@ def meal_figure(rows, out: Path) -> None:
 
 
 def chew_figure(rows, out: Path) -> None:
-    figure, axes = plt.subplots(1, 2, figsize=(10, 4.6))
+    figure, axes = plt.subplots(1, 3, figsize=(15, 4.6))
     # Both sides over the annotated stretch only, so a false detection
     # elsewhere in the recording does not count against the chew estimate.
+    # The third panel is the optical-rhythm rate (chew_rate.py) in the
+    # windows the model called eating, against annotated chews per minute of
+    # annotated eating windows, as in chew_rate_check.py.
     pairs = (("annotated_chews", "model_chews_same_span", "Chews per meal"),
              ("annotated_chews_per_min", "model_chews_per_min_same_span",
-              "Chewing rate (chews/min)"))
+              "Chewing rate, chew output (chews/min)"),
+             ("annotated_rate", "optical_rate_detected",
+              "Chewing rate, optical rhythm (chews/min)"))
     for axis, (true_key, model_key, title) in zip(axes, pairs):
         print(f"\n  {title}")
         top = 0.0
+        everyone = np.array([number(r, true_key) for r in rows])
+        everyone = everyone[np.isfinite(everyone) & (everyone > 0)]
+        if "rate" in title and len(everyone):
+            # The bar to beat: give every meal the same (mean) rate.
+            base = np.median(np.abs(everyone.mean() - everyone) / everyone)
+            print(f"    {'same rate for all':<22} {len(everyone):>3} meals: median error {base:.0%}")
         for flag, name, face in ((0, "held out of training", INK),
                                  (1, "used in training", "white")):
             group = [r for r in rows if int(r["in_training"]) == flag]
@@ -113,7 +127,7 @@ def chew_figure(rows, out: Path) -> None:
         axis.set_xlim(0, top * 1.05)
         axis.set_ylim(0, top * 1.05)
         axis.set_xlabel("Annotated")
-        axis.set_ylabel("Model")
+        axis.set_ylabel("Estimated")
         axis.set_title(title, loc="left")
         axis.legend(frameon=False, loc="upper left", fontsize=9)
     figure.tight_layout()

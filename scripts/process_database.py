@@ -56,9 +56,12 @@ SESSION_FIELDS = ["participant", "study", "start_utc", "end_utc", "hours_recorde
                   "hours_scored", "eating_min", "episodes", "chews", "chews_per_min",
                   "in_training", "annotated_windows", "f1", "precision", "recall",
                   "annotated_eating_min", "annotated_chews", "annotated_chews_per_min",
-                  "model_chews_same_span", "model_chews_per_min_same_span", "status"]
+                  "model_chews_same_span", "model_chews_per_min_same_span",
+                  "chews_per_min_optical", "annotated_rate", "optical_rate_detected",
+                  "optical_rate_annotated", "status"]
 EPISODE_FIELDS = ["participant", "study", "start_utc", "end_utc", "duration_s",
-                  "windows", "mean_probability", "chews", "chews_per_min"]
+                  "windows", "mean_probability", "chews", "chews_per_min",
+                  "chews_per_min_optical"]
 
 
 def recordings(conn, participants=None, studies=None):
@@ -92,13 +95,13 @@ def process(conn, model, transform, record, config, scale, annotated, participan
     threshold = float(record["threshold"])
     window = float(config.window_seconds)
     start, end = recording_range(conn, participant, study)
-    starts, probability, chews, missing = predict(
+    starts, probability, chews, rates, missing = predict(
         conn, model, transform, _SessionRef(participant=participant, study=study),
         start, end, window, scale)
     scored = np.isfinite(probability)
     eating = scored & (np.nan_to_num(probability) >= threshold)
     found = episodes(starts, eating, window, merge_gap, min_episode)
-    write_outputs(prefix, starts, probability, chews, eating, missing, found, window)
+    write_outputs(prefix, starts, probability, chews, rates, eating, missing, found, window)
 
     eating_min = eating.sum() * window / 60
     counted = chews[eating & np.isfinite(chews)]
@@ -110,11 +113,13 @@ def process(conn, model, transform, record, config, scale, annotated, participan
            "chews": f"{counted.sum():.0f}" if len(counted) else "",
            "chews_per_min": f"{counted.sum() / eating_min:.1f}"
            if len(counted) and eating_min else "",
+           "chews_per_min_optical": f"{np.nanmean(rates[eating]):.1f}"
+           if eating.any() and np.isfinite(rates[eating]).any() else "",
            "in_training": int(participant in set(record.get("training_participants", []))),
            "status": "ok"}
     session = annotated.get((participant, study))
     if session is not None and session.annotated_range() is not None:
-        m = annotation_scores(session, starts, probability, chews, threshold, window)
+        m = annotation_scores(session, starts, probability, chews, rates, threshold, window)
         if m is not None:
             row.update({"annotated_windows": m["annotated_windows"],
                         "f1": f"{m['f1']:.4f}", "precision": f"{m['precision']:.4f}",
@@ -129,8 +134,11 @@ def process(conn, model, transform, record, config, scale, annotated, participan
                 if m["model_eating_min_same_span"]:
                     row["model_chews_per_min_same_span"] = (
                         f"{m['model_chews_same_span'] / m['model_eating_min_same_span']:.1f}")
+            for key in ("annotated_rate", "optical_rate_detected", "optical_rate_annotated"):
+                if key in m:
+                    row[key] = f"{m[key]:.1f}"
     episode_list = [{"participant": participant, "study": study, **e}
-                    for e in episode_rows(starts, probability, chews, eating, found, window)]
+                    for e in episode_rows(starts, probability, chews, rates, eating, found, window)]
     return row, episode_list
 
 

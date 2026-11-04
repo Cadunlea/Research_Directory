@@ -13,6 +13,30 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 04/11/26 — chewing rate from the optical rhythm; paper draft
+
+- The chew head's per-meal COUNT follows the annotations (held-out r 0.92) but
+  its RATE does not (r -0.23): it predicts about the same chews per window
+  for everyone, so the count is right only because eating time is.
+- `chew_rate.py` measures rate from the optical signal instead: band-pass
+  0.94-2.17 Hz (Po et al. 2011), count peaks (min spacing 0.46 s, prominence
+  0.5 sd). No training; settings fixed from the literature, NOT tuned.
+  `chew_rate_check.py` on annotated eating windows, 59 meals: peak count
+  r 0.72, median error 7% (constant-rate baseline 10%); spectral peak r 0.67
+  but 16% high. Do not tune the settings on these meals.
+- Wired into inference: windows/episodes CSVs carry `chews_per_min_optical`;
+  sessions.csv adds annotated_rate, optical_rate_detected (model's eating
+  windows), optical_rate_annotated. plot_meals.py's chew_check has a third
+  panel with the baseline. Rerun process_database.py with --overwrite.
+- One session (AIM125068 snack) has no window labeled eating: report
+  detection over the 60 sessions with eating. Cause (near-empty snack vs
+  missing annotation) not yet checked.
+- `docs/paper/`: draft v0.1 (built by build_paper_draft.py) is reference
+  material; Caelan is writing the submission text himself in the IEEE Word
+  template (SoutheastCon 2027, 6 pages).
+
+---
+
 ## UPDATE 28/10/26 — whole-database inference, chews per meal
 
 - Final model trained (`models\food_intake_final`): threshold 0.750, best

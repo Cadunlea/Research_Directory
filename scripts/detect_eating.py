@@ -23,7 +23,10 @@ With --compare, a session that has annotations is also scored against them
 over its annotated span.
 
 Chew counts come from the model's second output, trained on the annotated
-chews (CHGT) and scaled back to chews per window. chew_check.py measures how
+chews (CHGT) and scaled back to chews per window. Chew counts per meal follow
+the annotations; the chewing rate from that output does not (it is about the
+same for everyone), so a second rate, chews_per_min_optical, is measured from
+the rhythm of the optical signal in each window (chew_rate.py). chew_check.py measures how
 well they match the annotations; check that before reporting them.
 
 USAGE
@@ -51,6 +54,7 @@ import numpy as np
 
 import ets_data
 import ets_eval
+from chew_rate import optical, peak_rate
 from episode_metrics import merge, runs_of
 
 CHUNK_SECONDS = 3600.0       # read the sensor data an hour at a time
@@ -120,11 +124,12 @@ def recording_range(conn, participant: str, study: str):
 
 def predict(conn, model, transform, ref, start: float, end: float,
             window: float, scale=None):
-    """(starts, probabilities, chews, missing fractions) for every window in
-    range. Chews are NaN without a chew scale, and wherever the window is not
-    scored."""
+    """(starts, probabilities, chews, optical chewing rates, missing
+    fractions) for every window in range. Chews are NaN without a chew
+    scale; all three are NaN wherever the window is not scored. The rate is
+    measured in every scored window; only eating windows' rates mean anything."""
     samples = int(round(window * ets_data.SENSOR_FS))
-    starts, probabilities, chews, missing = [], [], [], []
+    starts, probabilities, chews, rates, missing = [], [], [], [], []
     chunk_start = start
     while chunk_start + window <= end:
         chunk_end = min(chunk_start + CHUNK_SECONDS, end)
@@ -136,8 +141,9 @@ def predict(conn, model, transform, ref, start: float, end: float,
         X = block[:n * samples].reshape(n, samples, 4)
         gap = np.mean(X == ets_data.MISSING, axis=(1, 2))
         usable = gap <= ets_data.MAX_MISSING_FRACTION
-        p, c = np.full(n, np.nan), np.full(n, np.nan)
+        p, c, r = np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
         if usable.any():
+            r[usable] = peak_rate(optical(X[usable]), ets_data.SENSOR_FS)
             output = model(transform(X[usable]), training=False)
             if isinstance(output, dict):
                 if scale is not None:
@@ -147,10 +153,11 @@ def predict(conn, model, transform, ref, start: float, end: float,
         starts.extend(chunk_start + window * np.arange(n))
         probabilities.extend(p)
         chews.extend(c)
+        rates.extend(r)
         missing.extend(gap)
         chunk_start = chunk_end
     return (np.asarray(starts), np.asarray(probabilities), np.asarray(chews),
-            np.asarray(missing))
+            np.asarray(rates), np.asarray(missing))
 
 
 def episodes(starts, eating, window: float, merge_gap: float, min_seconds: float):
@@ -180,7 +187,7 @@ def window_labels(session, starts, window):
     return np.asarray(labels), np.asarray(chews)
 
 
-def annotation_scores(session, starts, probability, chews, threshold, window):
+def annotation_scores(session, starts, probability, chews, rates, threshold, window):
     """Scores against the session's annotations over the windows that are
     both annotated and scored; None if there are none."""
     labels, true_chews = window_labels(session, starts, window)
@@ -196,10 +203,20 @@ def annotation_scores(session, starts, probability, chews, threshold, window):
     if np.isfinite(chews[keep]).any():
         out["model_chews_same_span"] = float(np.nansum(chews[eating]))
         out["model_eating_min_same_span"] = float(eating.sum() * window / 60)
+    # Chewing rate as chew_rate_check.py defines it: annotated chews in the
+    # annotated eating windows per minute of those windows, against the
+    # optical rate in the windows the model called eating (and, for
+    # reference, in the annotated eating windows).
+    labelled = keep & (labels == 1)
+    if labelled.any():
+        out["annotated_rate"] = float(true_chews[labelled].sum() / (labelled.sum() * window / 60))
+        out["optical_rate_annotated"] = float(np.nanmean(rates[labelled]))
+    if eating.any() and np.isfinite(rates[eating]).any():
+        out["optical_rate_detected"] = float(np.nanmean(rates[eating]))
     return out
 
 
-def compare(conn, participant, study, starts, probability, chews, threshold, window):
+def compare(conn, participant, study, starts, probability, chews, rates, threshold, window):
     sessions = [s for s in ets_data.load_sessions(conn, [participant])
                 if s.study == study]
     if not sessions:
@@ -208,7 +225,7 @@ def compare(conn, participant, study, starts, probability, chews, threshold, win
     if sessions[0].annotated_range() is None:
         print("\n  --compare: annotations are all missing")
         return
-    m = annotation_scores(sessions[0], starts, probability, chews, threshold, window)
+    m = annotation_scores(sessions[0], starts, probability, chews, rates, threshold, window)
     if m is None:
         print("\n  --compare: no scored window falls inside the annotated span")
         return
@@ -217,48 +234,56 @@ def compare(conn, participant, study, starts, probability, chews, threshold, win
     if "model_chews_same_span" in m:
         print(f"  chews in the annotated span: {m['annotated_chews']:.0f} annotated, "
               f"{m['model_chews_same_span']:.0f} counted by the model in its eating windows")
+    if "annotated_rate" in m and "optical_rate_detected" in m:
+        print(f"  chewing rate: {m['annotated_rate']:.0f} chews/min annotated, "
+              f"{m['optical_rate_detected']:.0f} from the optical signal in the model's eating windows")
     print("  (this participant may be in the training set; see the note above)")
 
 
-def write_outputs(prefix: Path, starts, probability, chews, eating, missing,
+def write_outputs(prefix: Path, starts, probability, chews, rates, eating, missing,
                   found, window: float) -> None:
     prefix.parent.mkdir(parents=True, exist_ok=True)
     with open(f"{prefix}_windows.csv", "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["start_utc", "end_utc", "probability", "eating", "chews",
-                         "missing_fraction"])
-        for s, p, e, c, g in zip(starts, probability, eating, chews, missing):
+                         "chews_per_min_optical", "missing_fraction"])
+        for s, p, e, c, r, g in zip(starts, probability, eating, chews, rates, missing):
             writer.writerow([utc(s), utc(s + window),
                              "" if not np.isfinite(p) else f"{p:.4f}",
                              "" if not np.isfinite(p) else int(e),
-                             "" if not np.isfinite(c) else f"{c:.2f}", f"{g:.3f}"])
+                             "" if not np.isfinite(c) else f"{c:.2f}",
+                             "" if not np.isfinite(r) else f"{r:.1f}", f"{g:.3f}"])
     with open(f"{prefix}_episodes.csv", "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["start_utc", "end_utc", "duration_s", "windows",
-                         "mean_probability", "chews", "chews_per_min"])
-        for row in episode_rows(starts, probability, chews, eating, found, window):
+                         "mean_probability", "chews", "chews_per_min",
+                         "chews_per_min_optical"])
+        for row in episode_rows(starts, probability, chews, rates, eating, found, window):
             writer.writerow([row["start_utc"], row["end_utc"], row["duration_s"],
                              row["windows"], row["mean_probability"], row["chews"],
-                             row["chews_per_min"]])
+                             row["chews_per_min"], row["chews_per_min_optical"]])
 
 
-def episode_rows(starts, probability, chews, eating, found, window: float):
+def episode_rows(starts, probability, chews, rates, eating, found, window: float):
     """One dict per episode. Chews are summed over the episode's eating
     windows only, so the bridged pauses add none; the rate is per minute of
-    those windows."""
+    those windows. The optical rate is the mean over the same windows."""
     rows = []
     for first, last, duration in found:
         span = slice(first, last + 1)
         eat = eating[span]
         c = chews[span][eat]
         counted = c[np.isfinite(c)]
+        r = rates[span][eat]
+        r = r[np.isfinite(r)]
         minutes = eat.sum() * window / 60
         rows.append({"start_utc": utc(starts[first]), "end_utc": utc(starts[last] + window),
                      "duration_s": f"{duration:.0f}", "windows": last - first + 1,
                      "mean_probability": f"{np.nanmean(probability[span]):.3f}",
                      "chews": f"{counted.sum():.0f}" if len(counted) else "",
                      "chews_per_min": f"{counted.sum() / minutes:.1f}"
-                     if len(counted) and minutes else ""})
+                     if len(counted) and minutes else "",
+                     "chews_per_min_optical": f"{r.mean():.1f}" if len(r) else ""})
     return rows
 
 
@@ -292,19 +317,19 @@ def main() -> int:
         print(f"{args.participant}/{args.study}: {utc(start)} to {utc(end)} UTC "
               f"({(end - start) / 3600:.2f} h); model {args.model}, threshold "
               f"{threshold:.3f} ({record['threshold_objective']})")
-        starts, probability, chews, missing = predict(conn, model, transform, ref,
-                                                      start, end, window, scale)
+        starts, probability, chews, rates, missing = predict(
+            conn, model, transform, ref, start, end, window, scale)
         scored = np.isfinite(probability)
         eating = scored & (np.nan_to_num(probability) >= threshold)
         found = episodes(starts, eating, window, args.merge_gap, args.min_episode)
         if args.compare:
             compare(conn, args.participant, args.study, starts, probability,
-                    chews, threshold, window)
+                    chews, rates, threshold, window)
     finally:
         conn.close()
 
     prefix = Path(args.out) if args.out else Path("detections") / f"{args.participant}_{args.study}"
-    write_outputs(prefix, starts, probability, chews, eating, missing, found, window)
+    write_outputs(prefix, starts, probability, chews, rates, eating, missing, found, window)
 
     hours = scored.sum() * window / 3600
     print(f"\n  {int(scored.sum()):,} windows scored ({hours:.2f} h), "
