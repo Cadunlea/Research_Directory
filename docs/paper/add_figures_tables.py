@@ -13,7 +13,8 @@ changes are made; every other paragraph is left exactly as it is:
     IEEE's own table styles (tablecolhead, tablecopy) and the borders of the
     template's sample table; Table III (design comparisons) and its head are
     added in Input Representation;
-  * the gray "Fig. N here" / "Table N here" notes are removed. Fig. 2's note
+  * the "Fig. N here" / "Table N here" notes are removed, and the remaining
+    section notes turn from gray to black italic. Fig. 2's note
     is replaced by one about the anonymized version.
 
 Numbers in the tables are from the results compendium; cells still to be
@@ -281,6 +282,12 @@ def main(src: Path, dst: Path) -> None:
         tbl.addnext(spacer())
         tbl.getnext().addnext(pic)
         pic.addnext(cap)
+
+    # The section notes were gray; black italic is easier to read on screen
+    # and still marks them as temporary.
+    for color in list(root.iter(q("color"))):
+        if color.get(q("val"), "").upper() == NOTE:
+            color.getparent().remove(color)
 
     tree.write(str(doc_file), xml_declaration=True, encoding="UTF-8", standalone=True)
     rels.write(str(rels_file), xml_declaration=True, encoding="UTF-8", standalone=True)
