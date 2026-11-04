@@ -1,0 +1,35 @@
+% Internal planning note: the proposed study design and preliminary ablation.
+% Kept out of the paper draft on purpose; it will change before submission.
+% Compile with XeLaTeX, then BibTeX, like literature_review.tex.
+\documentclass[11pt]{article}
+
+\usepackage[letterpaper, margin=2.2cm]{geometry}
+\usepackage{fontspec}
+\IfFontExistsTF{Arial}{\setmainfont{Arial}}{%
+  \IfFontExistsTF{Liberation Sans}{\setmainfont{Liberation Sans}}{%
+    \setmainfont{TeX Gyre Heros}}}
+\usepackage[round, numbers, sort&compress]{natbib}
+\usepackage[table]{xcolor}
+\usepackage{booktabs, array, xltabular}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+
+\captionsetup{font=normalsize, labelfont=bf, justification=raggedright,
+              singlelinecheck=false}
+\arrayrulecolor{black!55}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.25}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\title{Food-intake detection: study design (internal)}
+\author{Caelan Dunlea}
+\date{1 October 2026}
+
+\begin{document}
+\maketitle
+\input{sec_plan}
+\bibliographystyle{unsrtnat}
+\bibliography{refs}
+\end{document}
