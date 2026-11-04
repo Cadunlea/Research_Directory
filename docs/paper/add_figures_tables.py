@@ -47,7 +47,7 @@ FIGURES = [
     ("Model architecture", "fig_architecture.png", 2.9,
      "Model architecture: three convolutional blocks, channel attention, attention pooling, "
      "eating and chew-count heads"),
-    ("F1 per held-out participant", "fig_participants.png", COLUMN_IN,
+    ("F1 per held-out participant", "fig_participants_anon.png", COLUMN_IN,
      "Bar chart of F1 for each of the 43 held-out participants"),
     ("Example held-out session", "fig_example.png", COLUMN_IN,
      "Annotated eating and model probability over time for one held-out lunch session"),
@@ -250,12 +250,7 @@ def main(src: Path, dst: Path) -> None:
         cap.addprevious(picture_paragraph(image, width, alt))
     drop(note("Fig. 1 here"))
     drop(note("Fig. 3 here"))
-    fig2 = note("Fig. 2 here")
-    if fig2 is not None:
-        for t in fig2.iter(q("t")):
-            t.text = ""
-        next(fig2.iter(q("t"))).text = ("Replace Fig. 2 with figures\\participants_anon.png "
-                                        "from participant_summary.py (P1 to P43, mean over seeds).")
+    drop(note("Fig. 2 here"))              # Fig. 2 is the anonymized P1 to P43 chart
 
     # Tables: below their heads; their notes removed.
     for head, spec, note_start in (("Dataset Summary", TABLE_I, "Table I here"),
