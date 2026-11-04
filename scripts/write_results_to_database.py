@@ -32,6 +32,9 @@ USAGE
     python write_results_to_database.py --config "%CFG%"            (dry run)
     python write_results_to_database.py --config "%CFG%" --write    (after the OK)
     python write_results_to_database.py --config "%CFG%" --identifier EATDET2
+
+process_database.py runs the same step at the end with --database dry-run or
+--database write, so one command does the whole inference.
 """
 
 from __future__ import annotations
@@ -78,19 +81,10 @@ def rows_from_csv(path: Path, identifier: str):
     return episodes, rows
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ets_data.add_database_arguments(parser)
-    parser.add_argument("--results", default="database_results",
-                        help="folder written by process_database.py")
-    parser.add_argument("--identifier", default="EATDET",
-                        help="data_identifier for the new rows (must be unused)")
-    parser.add_argument("--write", action="store_true",
-                        help="actually insert; without it nothing is written")
-    args = parser.parse_args()
-
-    results = Path(args.results)
-    episodes, rows = rows_from_csv(results / "all_episodes.csv", args.identifier)
+def store(args, results: Path, identifier: str, write: bool) -> int:
+    """Check the table, then insert the episodes in results\\all_episodes.csv
+    (or only report, when write is False). Returns the rows inserted."""
+    episodes, rows = rows_from_csv(results / "all_episodes.csv", identifier)
     model = {}
     if (results / "model.json").exists():
         with open(results / "model.json", encoding="utf-8") as handle:
@@ -116,19 +110,20 @@ def main() -> int:
             raise SystemExit(f"{TABLE} requires values for {required}, which this script "
                              f"does not write. Ask Siavash what they should hold.")
         existing = ets_data.query(conn, f"SELECT COUNT(*) FROM {TABLE} WHERE data_identifier=%s",
-                                  (args.identifier,))[0][0]
+                                  (identifier,))[0][0]
         if existing:
-            raise SystemExit(f"{existing} rows with data_identifier '{args.identifier}' already "
+            raise SystemExit(f"{existing} rows with data_identifier '{identifier}' already "
                              f"exist; refusing to add more. Use a new --identifier.")
 
-        print(f"\n{TABLE}: columns OK; data_identifier '{args.identifier}' is unused.")
+        print(f"\n{TABLE}: columns OK; data_identifier '{identifier}' is unused.")
         print("first rows that would be inserted:")
         for e in episodes[:5]:
             print(f"  {e['participant']}/{e['study']}  {e['start_utc']} to {e['end_utc']}  "
                   f"{e['duration_s']} s, chews {e.get('chews') or '-'}, "
                   f"optical rate {e.get('chews_per_min_optical') or '-'}")
-        if not args.write:
-            print(f"\nDRY RUN: nothing written. Add --write to insert {len(rows)} rows.")
+        if not write:
+            print(f"\nDRY RUN: nothing written. To insert the {len(rows)} rows, run again with "
+                  f"--write (or process_database.py --database write).")
             return 0
 
         sql = (f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}) "
@@ -141,11 +136,25 @@ def main() -> int:
             conn.rollback()
             raise
         written = ets_data.query(conn, f"SELECT COUNT(*) FROM {TABLE} WHERE data_identifier=%s",
-                                 (args.identifier,))[0][0]
-        print(f"\ninserted {written} rows with data_identifier '{args.identifier}'.")
-        print(f"To find them: SELECT * FROM {TABLE} WHERE data_identifier='{args.identifier}';")
+                                 (identifier,))[0][0]
+        print(f"\ninserted {written} rows with data_identifier '{identifier}'.")
+        print(f"To find them: SELECT * FROM {TABLE} WHERE data_identifier='{identifier}';")
+        return written
     finally:
         conn.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ets_data.add_database_arguments(parser)
+    parser.add_argument("--results", default="database_results",
+                        help="folder written by process_database.py")
+    parser.add_argument("--identifier", default="EATDET",
+                        help="data_identifier for the new rows (must be unused)")
+    parser.add_argument("--write", action="store_true",
+                        help="actually insert; without it nothing is written")
+    args = parser.parse_args()
+    store(args, Path(args.results), args.identifier, args.write)
     return 0
 
 

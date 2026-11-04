@@ -9,9 +9,10 @@ over each whole recording, and writes into --out (default database_results\):
     sessions\<participant>_<study>_episodes.csv   per episode, as detect_eating.py
     all_episodes.csv     every detected eating episode in the database, one row
                          each: participant, study, start, end, duration, mean
-                         probability, chews, chewing rate. This is the table
-                         meant to be written back to the database once its
-                         place there is agreed.
+                         probability, chews, chewing rate. With --database,
+                         these are then stored in study_data.numeric_data as
+                         a new record type (write_results_to_database.py:
+                         insert-only, dry run unless --database write).
     sessions.csv         one row per recording: hours recorded and scored,
                          minutes of eating, episodes, chews and chewing rate;
                          for annotated sessions also F1, precision, recall and
@@ -31,6 +32,8 @@ USAGE
     python process_database.py --config "%CFG%" --participants AIM146271 AIM147560
     python process_database.py --config "%CFG%" --studies ETS_lunch ETS_snack
     python process_database.py --config "%CFG%" --overwrite
+    python process_database.py --config "%CFG%" --database dry-run
+    python process_database.py --config "%CFG%" --database write    (after the OK)
 
 Scores against annotations are optimistic for participants the model trained
 on (in_training = 1). The fair estimate for new people is the
@@ -151,6 +154,12 @@ def main() -> int:
     parser.add_argument("--studies", nargs="*", help="only these studies (e.g. ETS_lunch)")
     parser.add_argument("--merge-gap", type=float, default=32.0)
     parser.add_argument("--min-episode", type=float, default=0.0)
+    parser.add_argument("--database", choices=("off", "dry-run", "write"), default="off",
+                        help="after processing, store the episodes in the database "
+                             "(write_results_to_database.py): dry-run checks and reports, "
+                             "write inserts")
+    parser.add_argument("--identifier", default="EATDET",
+                        help="data_identifier for the stored episodes (must be unused)")
     parser.add_argument("--list", action="store_true",
                         help="only list the recordings that would be processed")
     parser.add_argument("--overwrite", action="store_true",
@@ -222,6 +231,10 @@ def main() -> int:
         conn.close()
 
     write_rows(out / "sessions.csv", SESSION_FIELDS, [rows[k] for k in sorted(rows)])
+    if args.database != "off":
+        from write_results_to_database import store
+        print(f"\n--- database ({args.database}) ---")
+        store(args, out, args.identifier, write=(args.database == "write"))
     ok = [r for r in rows.values() if r.get("status") == "ok"]
     failed = [r for r in rows.values() if r.get("status", "ok") != "ok"]
     print(f"\n{len(ok)} recordings processed, {len(failed)} failed; "
