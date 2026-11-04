@@ -1,0 +1,11 @@
+% Standalone build of the architecture figure, for slides and email.
+\documentclass[11pt,border=4pt]{standalone}
+\usepackage{fontspec}
+\IfFontExistsTF{Arial}{\setmainfont{Arial}}{%
+  \IfFontExistsTF{Liberation Sans}{\setmainfont{Liberation Sans}}{\setmainfont{TeX Gyre Heros}}}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, calc}
+\begin{document}
+\input{fig_architecture}
+\end{document}

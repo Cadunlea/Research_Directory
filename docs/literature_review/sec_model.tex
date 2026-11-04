@@ -1,0 +1,51 @@
+\section{Model description}
+\label{sec:model}
+
+The model is a compact one-dimensional convolutional network that reads the
+normalised AIM-2 sensor signals and outputs the probability that an 8\,s window
+contains eating (Figure~\ref{fig:architecture}). It has four parts. A
+convolutional feature extractor learns its own filters from the time series
+instead of receiving hand-crafted features or a spectrum. A squeeze-and-excitation
+gate reweights the learned feature channels in each window. An attention
+pooling layer weights the time steps that carry the evidence. Finally, the
+output has two heads: one classifies eating, and one counts chews and is used
+only during training. The network has 47,282 parameters at inference
+(Table~\ref{tab:layers}). Table~\ref{tab:model} lists every design decision
+with its reason and the literature it rests on.
+
+\begin{figure}[H]
+\centering
+\input{fig_architecture}
+\caption{Model architecture. Shaded blocks are the two attention mechanisms.
+The dashed chew-count head is trained jointly and discarded at inference.
+Output shapes are time steps × features.}
+\label{fig:architecture}
+\end{figure}
+
+\input{tab_layers}
+
+\input{tab_model}
+
+\subsection{Dataset and current performance}
+
+The dataset is 61 annotated eating sessions (breakfast, lunch, dinner and
+snack) from 43 participants, 2 to 55 minutes each: 24.2 hours of annotated
+recording, of which 9.6 hours is eating. The eating fraction ranges from 0\%
+to 86\% by session. Validation is leave-one-subject-out: 43 folds, each
+holding out one participant with all of their sessions.
+
+Under leave-one-subject-out validation, pooled over all 10,891 held-out
+non-overlapping windows, the model reaches F1 0.856, accuracy 0.887,
+balanced accuracy 0.881, precision 0.860, recall 0.853 and specificity
+0.909, with 41 false alarms per hour of non-eating. Per-participant F1 has
+mean 0.836 (standard deviation 0.117, median 0.867), and three participants
+fall below 0.55. The same configuration under participant-level 5-fold
+cross-validation gives F1 0.864 and accuracy 0.893, so the estimate is not
+sensitive to the validation scheme.
+
+The training configurations tested (early-stopping criterion, learning rate,
+augmentation) differ by no more than 0.006 F1, while replacing the time
+series with a magnitude spectrum lowers F1 from 0.858 to 0.796 and raises
+false alarms from 32 to 81 per hour (5-fold). The input representation
+therefore carries the performance, and the variation between participants
+is larger than any difference between training configurations.

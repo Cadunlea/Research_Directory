@@ -3,7 +3,7 @@
 If you are a new Claude session, or Caelan picking this up after a break: this
 file is the current state of the work. Read it before changing anything.
 
-Branch: `claude/adoring-keller-gq1nmf`
+Branch: `claude/session-handoff-pbo7yl`
 Machine: the lab Windows box, venv `C:\Users\cadunlea\ets_venv` (Python 3.12)
 Working folder: `...\python_code\study_eating_trajectory\scripts\caelan_scripts`
 
@@ -12,6 +12,266 @@ is `localhost:30071` on the lab machine. Claude writes scripts, Caelan runs them
 and pastes the output back. Everything below was measured that way.
 
 ---
+
+## UPDATE 04/11/26 — chewing rate from the optical rhythm; paper draft
+
+- The chew head's per-meal COUNT follows the annotations (held-out r 0.92) but
+  its RATE does not (r -0.23): it predicts about the same chews per window
+  for everyone, so the count is right only because eating time is.
+- `chew_rate.py` measures rate from the optical signal instead: band-pass
+  0.94-2.17 Hz (Po et al. 2011), count peaks (min spacing 0.46 s, prominence
+  0.5 sd). No training; settings fixed from the literature, NOT tuned.
+  `chew_rate_check.py` on annotated eating windows, 59 meals: peak count
+  r 0.72, median error 7% (constant-rate baseline 10%); spectral peak r 0.67
+  but 16% high. Do not tune the settings on these meals.
+- Wired into inference: windows/episodes CSVs carry `chews_per_min_optical`;
+  sessions.csv adds annotated_rate, optical_rate_detected (model's eating
+  windows), optical_rate_annotated. plot_meals.py's chew_check has a third
+  panel with the baseline. Rerun process_database.py with --overwrite.
+- One session (AIM125068 snack) has no window labeled eating: report
+  detection over the 60 sessions with eating. Cause (near-empty snack vs
+  missing annotation) not yet checked.
+- `docs/paper/`: draft v0.1 (built by build_paper_draft.py) is reference
+  material; Caelan is writing the submission text in the IEEE Word
+  template (SoutheastCon 2027, 6 pages).
+
+---
+
+## UPDATE 28/10/26 — whole-database inference, chews per meal
+
+- Final model trained (`models\food_intake_final`): threshold 0.750, best
+  epoch 3/15; validation AIM146271, AIM128555, AIM109345, AIM147560, AIM116725.
+  Held-out demos: AIM146271/ETS_lunch F1 0.886 (P 0.925, R 0.849);
+  AIM147560/ETS_breakfast F1 0.667 (P 1.00, R 0.50; soft food).
+- `process_database.py`: every recording with sensor data -> per-recording
+  windows/episodes CSVs, `all_episodes.csv` (the table to write back to the
+  database once Siavash names the table and format) and `sessions.csv`
+  (incl. F1 and chews vs annotation where annotated, in_training flag).
+  Resumable; `--list` first.
+- Episodes now carry the chew head's count and chewing rate (chews per
+  minute of eating windows). `plot_meals.py` draws eating time, chews and
+  chewing rate per meal, and `chew_check` (model vs annotated chews per meal,
+  held-out vs trained-on). Chews are unvalidated until chew_check is run.
+- `model.json` now records `chew_scale`; older models recompute it from the
+  window cache (same value).
+- `plot_sensor_vs_annotations.py --study ETS_lunch` reads the annotations
+  from the database (no CSV needed). The `--windows` threshold line now reads
+  model.json (it was drawn at the lowest eating probability).
+- Lunch vs other meals: per-session median F1 0.815 vs 0.890 (p = 0.009);
+  some lunches were solo, so this is NOT a group-eating result. Group vs
+  solo needs a per-session setting (`session_type_analysis.py --groups`).
+
+---
+
+## UPDATE 20/10/26 — EVALUATION-GRID BUG FIXED; use results_fixed\ only
+
+`aligned_mask` anchored the non-overlapping scoring grid per PARTICIPANT with
+np.isclose's relative tolerance, so all 18 second sessions were scored on
+their half-overlapping windows (10,891 scored windows instead of 9,133).
+Training, early stopping and thresholds were unaffected; every run shared the
+same windows, so comparisons stayed fair. Fixed in `ets_train.evaluation_grid`
+(per session, absolute tolerance, tested). `rescore_runs.py results\*.json`
+re-scored every run from saved predictions into `results_fixed\`; no session
+was unscored. **All numbers in the 17/10 section below are superseded by these:**
+
+- Default (seed 9): F1 0.854, accuracy 0.887, balanced 0.881, precision 0.854,
+  recall 0.855, 41.4 FA/h; participant F1 median 0.867, mean 0.832.
+  3 seeds: 0.844–0.858 (mean 0.852).
+- 5 inner, 3 seeds: mean F1 0.861 (0.859–0.861); vs 2 inner +0.008
+  [+0.001, +0.016], 30 better / 12 worse, p = 0.004. Without the three
+  weakest participants the gain vanishes (+0.001): it comes from steadier
+  thresholds for them. 8 inner +0.001, sequence model -0.003, soft labels
+  +0.001: none differ from 5 inner.
+- FFT: F1 0.791, 84.0 FA/h, 5 better / 38 worse. Operating curve recall at
+  ~10 FA/h 0.567 vs 0.317; at ~15, 0.643 vs 0.411; at ~5, 0.379 vs 0.172.
+- FA budget 15/h: 17.6 FA/h held out, precision 0.921, recall 0.724, F1
+  0.811. F0.5: 23.7 FA/h, precision 0.901, recall 0.763.
+- Within noise now includes 16 s windows (-0.014 [-0.030, +0.002]). Worse:
+  FFT, 32 Hz (-0.013), 16 Hz (-0.020). 2 s windows (5-fold): 0.826 vs 0.860.
+- Errors: 62% at bout edges (75% of false-alarm windows, 49% of misses);
+  F1 0.944 if edges forgiven; isolated false alarms only 19%; false
+  episodes 8.9/h. (The old "isolated" and "mid-meal" counts were inflated by
+  double-scored windows; AIM130163's "124 mid-meal misses" is now 28.)
+- Excluding the 3 participants below 0.55: 0.854 -> 0.864, inside [0.829, 0.876].
+- Episode level (`episode_metrics.py`): 89.5% of eating episodes detected,
+  99–100% of those >= 32 s, median delay 0 s, 8.9 false episodes/h, episode
+  precision 88.8%; with the FA budget 77.6%, 4.1/h, 93.8%. Merging pauses
+  <= 32 s: 92.8% / 1.7/h (default), 82.9% / 1.2/h (budget).
+
+---
+
+## UPDATE 17/10/26 — model frozen; leave-one-out results; what is running
+
+**Status.** Contract Activity 6 (run/validate/iterate) is effectively done: the
+approved model is frozen. Everything below is leave-one-subject-out (43
+participants, 10,891 held-out windows), lr 0.0003, early stopping on AUC.
+Next contract items: inference script (Activity 7, due 11/04), meal-level
+metrics (Activity 8, 11/11), paper draft (Activity 9, 12/02).
+
+**Headline numbers (default model, seed 9).** Pooled F1 0.856, accuracy 0.887,
+balanced accuracy 0.881, precision 0.859, recall 0.853, 41.1 false-alarm
+windows per hour of non-eating; median participant F1 0.867. (0.836 / 0.886
+are the fold MEANS, not pooled — an early slide had this wrong.) Confusion:
+TP 3,676, FP 601, FN 633, TN 5,981. Three seeds (9/10/11): F1 0.848–0.860,
+mean 0.855 — this is the noise floor.
+
+**The four findings presented (10/15 lab meeting).**
+1. The model works; every architectural variation is within seed noise.
+2. Time series beats FFT: F1 0.856 vs 0.796, false alarms 41 vs 89/h; at
+   matched false-alarm rates recall is 1.3–2.6x higher (operating curve).
+3. False positives are controllable: 53% of false-alarm windows are adjacent
+   to real eating; sustained false episodes ~0.8/h; a false-alarm budget
+   (15/h, chosen on validation participants) gives 17.0/h on held-out
+   participants, precision 0.925, recall 0.717 (TP 3,088, FP 249, FN 1,221,
+   TN 6,333). Measured in meal sessions, not free living.
+4. Threshold/early stopping on 5 validation participants instead of 2:
+   +0.009 F1 [+0.002, +0.015], 31/43 better, p = 0.004 (3 seeds vs 3 seeds).
+   Gain is recall (0.853 -> 0.874); false alarms 41 -> 44/h.
+
+**Within noise:** average pooling, no channel attention, chew weight 0 or 1,
+1 Transformer layer, 3-model ensemble, augmentation, soft labels (3 seeds:
+-0.002), 4 s windows, 64 Hz. **Worse:** FFT (-0.061), 32 Hz (-0.012), 16 Hz
+(-0.019), 16 s windows (-0.020, borderline; CI includes 0 without the three
+weakest participants). 2 s windows not run under LOSO.
+
+**Error analysis** (`error_breakdown.py`): 40% of errors are at bout edges
+(316 edge FP + 177 edge FN of 1,234); F1 0.912 if edges were forgiven.
+Excluding the three participants below F1 0.55 gives 0.866 (inside the 95%
+interval [0.831, 0.880]) and changes no comparison. Weakest four: AIM147560
+(model barely responds; cause unknown), AIM112400 (fold threshold 0.86 too
+strict), AIM132097 (edges), AIM122571 (short bouts); together they have 2
+false-alarm windows. Fold thresholds range 0.06–0.93 (chosen on 2 people).
+AIM127703 dinner: long high-probability stretches between annotated bouts —
+check the video at ~1.8–3, 11.3–12.3, 15.5–16.3 min for unannotated eating.
+
+**Ground truth recipe:** sample = eating if BOGT (bout) OR BIGT (bite); CHGT
+(chews) is not in the label, only the chew-head target; window = eating if
+>50% of its annotated samples are eating. Preprocessing is per-window z-score
+only — NOT band-passed (the `high_pass` option only subtracts the mean, which
+the z-score does anyway; rename it).
+
+**Running / queued on the lab machine (one at a time, QuickEdit off, no sleep):**
+1. `sequence_run.bat` — `--sequence 15` (bidirectional GRU over 2 min of
+   windows, end to end), 5 inner, 3 seeds, ~12 h. Compare against
+   `..._x3_stopauc_lr0.0003_inner5.json`; check isolated false alarms and
+   false episodes/h in `error_breakdown.py`.
+2. 8 inner participants, 3 seeds (overnight_lane2) — was frozen for a night;
+   confirm `..._x3_stopauc_lr0.0003_inner8.json` exists.
+3. Stripped-down model (no SE, average pooling, chew 0), 5 inner, 3 seeds —
+   answers whether the components matter jointly (ablation was one at a time).
+4. FCN and ResNet baselines with `--folds 5` (LOSO takes 30–55 h each; both
+   weekend LOSO runs were stopped and saved nothing). Compare against the
+   5-fold reference `time_se_attnpool_chew0.2_w8_128hz_5fold_seed9_stopauc_lr0.0003`.
+
+**New scripts this round:** `exclude_participants.py`, `error_breakdown.py`
+(`--threshold`, `--all-participants`), `plot_confusion.py`,
+`plot_results.py --participants`, flags `--soft-labels` (needs
+`--rebuild-cache --cache-dir ets_cache_soft`) and `--sequence N`.
+Demo deck: `docs/presentation/lab_meeting_findings_demo.pptx`.
+
+**Open decisions for Dr. Sazonov:** default threshold vs false-alarm budget
+for the shipped model; paper venue (EMBC is the natural fit), authorship, and
+whether ETS data can be published.
+
+**Reminders:** rotate the DB password and API token that were pasted in chat;
+never write a placeholder `set CFG=` line (the real path is
+`...\study_eating_trajectory\lib_jitai\jitai_config.ini`).
+
+---
+
+## UPDATE 1/10/26 (later) — first results on all 61 sessions
+
+61 sessions, 43 participants (18 have two sessions), 24.2 h annotated, 9.6 h
+eating. LOSO = 43 folds. 5-fold default model: pooled F1 0.858, accuracy
+0.891, balanced accuracy 0.881, precision 0.884, recall 0.834, 32 false
+alarms/h; per-participant F1 0.835 +- 0.136. Worst: AIM132097 (0.18).
+
+Early stopping on val_loss kept the EPOCH-1 weights in three of five folds.
+`--monitor auc` (early stopping on validation ROC AUC) and
+`--inner-participants N` were added to test the fix. Each fold line now prints
+`best ep X/Y`. The study design moved out of the review into
+`docs/literature_review/study_plan.pdf`.
+
+## UPDATE 1/10/26 — the clean scripts folder
+
+All current code is in `scripts/` (copy it to
+`...\python_code\study_eating_trajectory\scripts`). Everything else was
+removed; git history keeps it. `scripts/README.md` has the full flag table and
+run order.
+
+- `train_food_intake.py` replaces v1 and v2. Model A/B no longer exist; the
+  default IS the model. Old flags renamed: `--fft-input` -> `--input fft`,
+  `--no-auxiliary` -> `--chew-weight 0`, `--no-attention` ->
+  `--no-channel-attention --pooling average`.
+- New: leave-one-subject-out by default (`--folds K` for quick runs),
+  `--sample-rate`, `--transformer-layers`, `--architecture fcn/resnet`,
+  `--chew-weight`, `--repeats`, `--sweep`, `--threads`. Smoothing is off by
+  default.
+- Every run writes `results/<config tag>.json` + `_predictions.npz`; runs no
+  longer overwrite each other.
+- `compare_runs.py` does the paired per-participant statistics (bootstrap CI,
+  Wilcoxon). `plot_results.py` does the grayscale figures.
+- The LOSO harness in the repo was REBUILT here to the spec of the uploaded
+  tests (the local LOSO version was never pushed). Inner-validation selection
+  under LOSO is `rotate`; LOSO numbers may differ slightly from the 9/22
+  slide for that reason.
+- `participant_info` rows are enrolled sessions, not annotated ones. The
+  training run prints `N session(s) with ground truth`: that is the real
+  count.
+
+## UPDATE 30/9/26 — read this before the rest
+
+**Model A is retired as a concept.** Model B is simply "the model". The PI said
+at the 9/23 meeting not to compare against the previous model; compare against
+published architectures instead. The history below still mentions A and B.
+
+**Validation is now leave-one-subject-out** (PI's instruction, 9/23): use LOSO
+whenever it is computationally feasible. Current LOSO result, 20 sessions,
+pooled over 3,503 windows: F1 0.838, accuracy 0.890, balanced accuracy 0.879,
+precision 0.828, recall 0.848 (per-participant F1 0.811 ± 0.124). The 4-fold
+numbers below are superseded. **61 annotated sessions now exist**, so every
+result needs to be re-run.
+
+**Activity 4 (literature review) is drafted:** `docs/literature_review/`.
+It has the review, the model description (figure, layer table, and one row per
+design decision with its literature) and the proposed study plan. It uses
+Arial 11 pt, grayscale only, and XeLaTeX for Overleaf.
+
+**Citation corrections found while verifying (do not reuse the old claims):**
+- Doulah 2021 (AIM-2): SVM, not random forest. It used a *flex* sensor and
+  10 s epochs, LOSO on 30 participants, F1 0.818.
+- Ghosh & Sazonov 2022: reports ResNet **balanced accuracy 93.47%**. The
+  "F1 0.906" claim was not found. This is the closest prior work on AIM-2
+  optical data, so reproduce it under our LOSO before comparing.
+- Ghosh 2024: fused F1 80.77%. "Sensor-only F1 0.776" was not found.
+- "Yang et al. 2026, Physical Communication, augmentation beats transformer":
+  NOT FOUND. It is left out of the review until the paper is located.
+- The code does per-window mean removal and a z-score, not a band-pass filter.
+  Do not call the input "band-passed".
+
+**Meeting action items (9/23):** find sensor-transformer papers; test sampling
+rate (32 Hz), window length, and chew-loss weight; email the PI a short model
+explanation; plan the ablation with the PI; add non-eating (negative)
+participants from other ETS studies to the training set.
+
+---
+
+## Contract status (RRSP Phase II, signed 9/4/26)
+
+| # | Activity | Deadline | Status |
+|---|---|---|---|
+| 2 | Migrate to new database, unify data access | 09/09/26 | DONE — `ets_data.py` is the unified module |
+| 3 | Data quality assessment (missingness, alignment, flagged sessions) | 09/23/26 | DONE — `probe_database.py` + `check_annotation_drift.py` cover missingness, sensor/annotation alignment and per-session coverage |
+| 4 | Literature review recommending a model approach | 09/23/26 | **NOT STARTED** — candidate papers listed at the end of this file |
+| 5 | Model development and coding | 10/07/26 | AHEAD — both models built and evaluated |
+| 6 | Run, validate, iterate | 10/28/26 | AHEAD — 4-fold CV plus six ablations done |
+| 7 | Inference script | 11/04/26 | not started |
+| 8 | Quantify all metrics | 11/11/26 | largely done, needs packaging |
+| 9 | Paper/report | 12/02/26 | not started |
+
+Note the contract names PyTorch for Activities 5-6; the work moved to
+TensorFlow/Keras to match the lab toolchain. Worth a sentence to the PI rather
+than a silent deviation.
 
 ## The task
 
@@ -43,6 +303,28 @@ Confusion: tp=980 fp=139 fn=195 tn=2189. Per-fold F1 0.920 / 0.801 / 0.807 /
 
 A and B above are on the same harness and are directly comparable. A -> B is
 +0.075 F1, +0.064 accuracy, and +0.146 precision.
+
+## WHAT CHANGED, COMPONENT BY COMPONENT (Model A -> Model B)
+
+Slide-ready. Model A is the original architecture retrained on the new
+database; Model B is the current model. Same folds, same harness, same
+evaluation windows for both.
+
+| # | Component | Original (Model A) | New (Model B) | Why |
+|---|---|---|---|---|
+| 1 | Input representation | FFT magnitude spectrum, 513 bins x 4 ch | Band-passed time series, 1024 samples x 4 ch | Magnitude discards phase; chewing is a rhythmic envelope and a bite is a transient, both smeared by a spectrum |
+| 2 | Normalisation | per-window z-score, missing samples left at -1 | per-window z-score + DC removal, missing excluded then set to 0 | -1 is not neutral against optical values near 3000 counts; it injects a step at every gap |
+| 3 | Channel weighting | none (fixed conv filters) | cross-channel attention (squeeze-excite) | optical carries chewing, accelerometers carry motion that is sometimes signal and often artefact |
+| 4 | Pooling | global average over frequency | attention pooling over time | averaging buries a 2 s bite inside an 8 s window |
+| 5 | Supervision | single binary head | binary head + auxiliary chew-count head (CHGT), discarded at inference | one bit per window is thin supervision for ~7.8 h of data; counting forces the trunk to represent rhythm |
+| 6 | Training windows | non-overlapping, 8 s hop | 50% overlap (4 s hop) at TRAIN time only | roughly doubles training windows; evaluation stays on the non-overlapping grid |
+| 7 | Framework | PyTorch | TensorFlow / Keras 3.15 | matches the lab toolchain |
+| 8 | Data source | annotation CSVs + hardcoded 14-participant list | database (`study_data` GT + `aim_raw_data` XYZO), no participant list | participant list cannot go stale; labels come from one source of truth |
+| 9 | Evaluation | one 2-participant split, 249 windows, threshold fixed 0.40 | participant-level 4-fold CV, 3,503 windows, threshold fit on validation participants | a single small split has a very wide confidence interval |
+| 10 | Annotation shift | -8 s applied | none | measured at +0.10 s on the new database; no correction warranted |
+
+Headline effect of 1-6 together: **F1 0.779 -> 0.854, accuracy 0.841 -> 0.905,
+precision 0.730 -> 0.876.**
 
 ## ABLATION TABLE - what actually caused the improvement
 
@@ -82,9 +364,74 @@ The marginals do NOT sum to the A -> B total of +0.075, and should not be made
 to: ablations measure marginal contributions and these interact, which is the
 whole point of the FFT row.
 
-OTHER ABLATION
-- 8 s context WITHOUT a target marker: -0.080 F1. See the negative results
-  section - diagnosed, with a fix that is implemented but still untested.
+### Each ablation, one at a time
+
+**1. Input representation — the only effect larger than noise**
+
+| | F1 | Accuracy | Precision | Recall |
+|---|---|---|---|---|
+| Model B (time-domain) | 0.854 | 0.905 | 0.876 | 0.834 |
+| Same model, FFT input | 0.767 | 0.826 | 0.696 | 0.855 |
+| **Effect** | **+0.087** | **+0.079** | **+0.180** | **-0.021** |
+
+Note recall is slightly LOWER — do not say "improved across the board". The
+gain is in precision. And the sharpest point: Model B's architecture on FFT
+features (0.767) is WORSE than Model A's simpler architecture on the same
+features (0.779), so the architecture only earns its keep once the input has
+temporal structure.
+
+**2. Overlap augmentation — suggestive, about half the fold spread**
+
+| | F1 | Accuracy | Precision |
+|---|---|---|---|
+| Model B (4 s hop at train time) | 0.854 | 0.905 | 0.876 |
+| Model B (8 s hop, no overlap) | 0.829 | 0.886 | 0.834 |
+| **Effect** | **+0.025** | **+0.019** | **+0.042** |
+
+**3. Cross-channel attention + attention pooling — inside noise**
+
+| | F1 | Accuracy | Precision |
+|---|---|---|---|
+| Model B (with attention) | 0.854 | 0.905 | 0.876 |
+| Model B (global average pooling) | 0.847 | 0.899 | 0.857 |
+| **Effect** | **+0.007** | **+0.006** | **+0.019** |
+
+**4. Auxiliary chew-count head — inside noise**
+
+| | F1 | Accuracy | Precision |
+|---|---|---|---|
+| Model B (with chew head) | 0.854 | 0.905 | 0.876 |
+| Model B (no chew head) | 0.849 | 0.900 | 0.857 |
+| **Effect** | **+0.006** | **+0.005** | **+0.019** |
+
+The gain concentrates in fold 2 (0.780 -> 0.801), the fold holding the weakest
+optical signal. Direction matches the motivation; magnitude does not clear
+noise.
+
+**5. Post-hoc temporal smoothing — NEGATIVE**
+
+| | F1 | Accuracy | Precision | Recall |
+|---|---|---|---|---|
+| Model B | 0.854 | 0.905 | 0.876 | 0.834 |
+| + median filter (3 windows) | 0.775 | 0.847 | 0.765 | 0.785 |
+| **Effect** | **-0.079** | **-0.058** | **-0.111** | **-0.049** |
+
+Fair test: smoothing selects its own threshold. Eating is not contiguous at 8 s
+— meals are punctuated by pauses between bites — so a 24 s median erases short
+real bouts.
+
+**6. Context windows without a target marker — NEGATIVE**
+
+| | F1 | Accuracy | Precision | Recall |
+|---|---|---|---|---|
+| Model B | 0.854 | 0.905 | 0.876 | 0.834 |
+| + 8 s context each side | 0.775 | 0.825 | 0.683 | 0.894 |
+| **Effect** | **-0.080** | **-0.080** | **-0.193** | **+0.060** |
+
+Precision collapsed while recall rose: given 24 s of signal and no indication
+which 8 s the question concerned, the model answered "is there eating SOMEWHERE
+in this window". A marker channel identifying the labelled window is
+implemented (`mark_target_window`) but NOT YET TESTED.
 
 Protocol history, since the numbers moved twice and a reader may ask:
 3 inner participants + threshold restricted to non-overlapping validation
@@ -119,21 +466,61 @@ form of selecting on the test set and should be disclosed rather than hidden.
 Ports: **30071 is MariaDB** (what Python connects to), 30073 is phpMyAdmin (the
 browser page). Both are correct, for different things.
 
-## The 8-second shift does not exist — settled
+## Annotation alignment — verified on the new database
 
-The old code hardcoded `ANNOTATION_TIME_SHIFT_SECONDS = -8.0`.
-`check_annotation_drift.py` measured the real lag on all 20 sessions:
+Not a headline finding; a precondition that had to be checked before training
+on this data, and it passed.
+
+PROVENANCE, because it is easy to overstate: the `-8.0` shift was Caelan's own
+diagnostic correction in his previous model, on the OLD CSV-based pipeline. It
+was never applied by anyone else and never used elsewhere in the lab. The lab
+separately rebuilt the database and identified what may have caused the
+original misalignment. The job here was only to confirm the new database needs
+no correction.
+
+HOW IT WAS VERIFIED - the method, for slides or a methods section:
+
+1. For each of the 20 annotated sessions, build the eating mask from the
+   database ground truth (BOGT bout OR BIGT bite) at 10 Hz.
+2. From the same session's optical channel at 128 Hz, derive a chewing-activity
+   signal: band-pass to the chewing band (0.8-3.0 Hz), take the Hilbert
+   envelope, smooth 0.5 s, resample to 10 Hz on the true time grid.
+3. Cross-correlate the two over candidate lags of +-30 s in 0.1 s steps,
+   computing Pearson r only over samples valid in BOTH series so missing
+   sensor data and un-annotated time cannot invent agreement.
+4. The lag at peak correlation is that session's measured offset. A session
+   whose peak never rises above r = 0.10 is reported UNRELIABLE and excluded
+   rather than contributing a number read off noise.
+5. Repeat under both possible readings of `data_timestamp` (packet start vs
+   packet end) so the data decides rather than an assumption.
+
+The measurement itself is validated in `test_drift_check.py`, which injects
+offsets of known size and direction into synthetic data and confirms they are
+recovered. That test caught a real bug during development: resampling 128 Hz to
+10 Hz by averaging round(12.8) = 13-sample blocks yields 9.846 Hz, an error
+that grows with elapsed time and reaches ~8 s by the middle of a 17-minute
+session. Resampling is now done on the true time grid.
+
+`check_annotation_drift.py` measured the lag on all 20 sessions:
 
 | `data_timestamp` read as | Median lag | Range | Within ±1 s |
 |---|---|---|---|
 | packet **start** | **+0.10 s** | +0.00 … +0.20 | **20/20** |
 | packet **end** | −7.90 s | −8.00 … −7.80 | 0/20 |
 
-Peak correlation identical either way (0.716 vs 0.715). Genuine drift degrades
-the correlation; a units error displaces it while preserving its shape.
-`data_timestamp` is the packet **start**. The old code computed
-`packet_start = data_timestamp - data_duration`, reading a start as an end, and
-that produced an artefact of exactly one 8 s packet.
+Peak correlation is identical either way (0.716 vs 0.715), which is what
+distinguishes a displacement from a degradation.
+
+THE MEASURED CLAIM, and the only one to make: on this database, read with
+`data_timestamp` as the packet START, the annotations are aligned to within
+0.2 s on every session. No correction is warranted.
+
+A HYPOTHESIS, not established: the two readings differ by exactly one 8 s
+packet, and the old training code computed `packet_start = data_timestamp -
+data_duration`, i.e. read a start timestamp as an end. That would produce an
+artefact of exactly the observed size. This is a plausible account of the old
+pipeline only - the database was rebuilt in the meantime and the lab has its
+own explanation, so do not present it as the cause of anything.
 
 **No shift is applied anywhere. Do not reintroduce one.**
 
