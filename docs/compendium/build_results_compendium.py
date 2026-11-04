@@ -222,15 +222,17 @@ table("Final configuration, 43 participants, 3 seeds.", ["Metric", "Value"], [
     ["Precision", "0.849"],
     ["Recall (sensitivity)", "0.870"],
     ["Specificity", "0.902 (from balanced accuracy and recall)"],
-    ["Median participant F1", "0.862"],
+    ["Participant F1, median", "0.863 (mean over seeds per participant)"],
+    ["Participant F1, mean ± SD", "0.844 ± 0.101 (range 0.499 to 0.983; 4 below 0.70)"],
     ["False alarms per hour of non-eating", "43.8 windows"],
     ["Seed-to-seed variation", "about ±0.007 F1"],
     ["Human agreement (one session)", "0.912"],
 ], [3.0, 3.7])
 source(FINAL_RUN + "; docs/presentation/final_metrics_table.pptx.")
-figure("fig_participants.png", 6.6, "F1 per held-out participant, final configuration, with "
-       "the pooled F1 dashed. Participant IDs must become P1 to P43 in the paper.")
-table("Lowest participants and causes (F1 read from Figure 2).", ["Participant", "F1",
+figure("fig_participants_anon.png", 6.6, "F1 per held-out participant (mean over 3 seeds), "
+       "final configuration, labeled P1 to P43, with the pooled F1 dashed. The key from codes to "
+       "IDs is results_fixed\\participant_codes.csv (private).")
+table("Lowest participants and causes (F1 read from the earlier chart with IDs).", ["Participant", "F1",
       "Cause"], [
     ["AIM132097", "~0.50", "Chews about 4 s, pauses about 3 s to talk, repeats: bouts shorter "
                            "than a window; errors at edges"],
@@ -275,7 +277,8 @@ table("Error location (reference configuration, one seed; recompute on the final
           ["F1 with edge windows forgiven", "0.944"],
           ["Isolated false alarms", "19% of false alarms"],
           ["False episodes per hour", "8.9"],
-          ["Fold thresholds", "0.06 to 0.93 (with 2 validation participants)"],
+          ["Fold thresholds", "0.06 to 0.89 in the final configuration (0.06 to 0.93 with 2 "
+                              "validation participants)"],
       ], [3.6, 3.1])
 source(REF_RUN + "; error_breakdown.py.")
 
@@ -330,6 +333,8 @@ table("The shipped model.", ["Item", "Value"], [
     ["Best epoch", "3 of 15"],
     ["Whole database", "61 recordings, 370 eating episodes; about 1 s per recording "
                        "(4 s for 12.5 h)"],
+    ["Database write-back", "process_database.py --database dry-run or write: insert-only, new "
+                            "record type, refuses if it exists; format awaiting approval"],
     ["Median F1, 8 held-out sessions", "0.854 (LOSO median participant F1: 0.862)"],
     ["Median F1, 53 trained-on sessions", "0.889 (optimistic: the model trained on them)"],
 ], [2.4, 4.3])
@@ -379,24 +384,25 @@ table("Not directly comparable: data, epochs and protocols differ.",
           ["Kyritsis et al. 2021", "Smartwatch inertial data, CNN plus LSTM, LOSO",
            "Bite F1 0.923; meal start/end Jaccard 0.820"],
           ["This work", "43 participants, 8 s windows, compact CNN, LOSO",
-           "F1 0.86 pooled; median participant 0.862; 91.9% of episodes"],
+           "F1 0.86 pooled; per participant 84.4 ± 10.1% (median 0.863); 91.9% of episodes"],
       ], [1.6, 2.6, 2.5])
-text("To compare with Doulah et al., also report this work's mean ± standard deviation of "
-     "per-participant F1 (not yet computed for the final configuration).", size=10, gray=True)
+text("Like for like with Doulah et al. (mean ± SD over participants): 84.4% ± 10.1% here "
+     "against 81.8% ± 10.1%, on different data and epochs.", size=10, gray=True)
 
 # --------------------------------------------------------------------------- #
 doc.add_paragraph("10. To recompute or confirm before submission", style="Heading 1")
 bullets([
-    "Error location (Section 5) and the fold threshold range on the final configuration.",
-    "Mean ± SD of per-participant F1, final configuration.",
+    "Error location (Section 5) on the final configuration (error_breakdown.py).",
     "Episode metrics: which merge gap the reported table used.",
     "AIM125068 snack: why no window is labeled eating (near-empty snack or missing annotation).",
     "Sensor type: the ETS database calls the channel optical; Doulah 2021 describes a flex "
     "sensor. Confirm which AIM-2 version ETS used.",
-    "Whether Doulah 2021 or Ghosh 2022 compared against inter-annotator agreement.",
+    "Whether Doulah 2021 or Ghosh 2022 compared against inter-annotator agreement (Farooq and "
+    "Sazonov 2016 reported agreement for chew counting only: intra-class correlation 0.988).",
+    "Database write-back: table and format to agree (process_database.py --database dry-run "
+    "is ready; a separate table is the proposed option).",
     "Inter-annotator agreement on more than one session (re-annotation of the weakest "
     "participants planned).",
-    "Relabel participants P1 to P43 in figures.",
     "With Dr. Sazonov: author list and order, funding and grant number, whether ETS data can "
     "be published, SoutheastCon deadline, AI-use disclosure wording.",
 ])
