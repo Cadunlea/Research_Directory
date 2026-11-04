@@ -32,7 +32,7 @@ and pastes the output back. Everything below was measured that way.
   detection over the 60 sessions with eating. Cause (near-empty snack vs
   missing annotation) not yet checked.
 - `docs/paper/`: draft v0.1 (built by build_paper_draft.py) is reference
-  material; Caelan is writing the submission text himself in the IEEE Word
+  material; Caelan is writing the submission text in the IEEE Word
   template (SoutheastCon 2027, 6 pages).
 
 ---
