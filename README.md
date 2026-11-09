@@ -87,7 +87,7 @@ python process_database.py --config "%CFG%" --database dry-run
 `--database dry-run` also checks the database and reports what would be
 stored; `--database write` stores the model's output in
 `study_data.numeric_data` in the same format as the annotations: record types
-`EATDET` (eating decision), `EATPRB` (probability x 1000) and `EATCHR`
+`EATD` (eating decision), `EATP` (probability x 1000) and `CHRT`
 (chewing rate x 10), whole-day 10 Hz arrays with -1 where nothing was scored.
 Insert only, in one transaction; it refuses to run if those record types
 already exist.

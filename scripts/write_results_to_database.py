@@ -16,11 +16,12 @@ lab code that reads an annotation can read the model's output unchanged:
                               data, or outside the recording), as in the
                               annotations
 
-Three new record types (data_identifier), none of which exists yet:
+Three new record types (data_identifier is CHAR(4), like CHGT/BOGT/BIGT/XYZO),
+none of which exists yet:
 
-    EATDET   model decision: 1 eating, 0 not eating          (compare with BOGT/BIGT)
-    EATPRB   model probability of eating x 1000 (0 to 1000)
-    EATCHR   chewing rate from the optical sensor, chews per minute x 10,
+    EATD   model decision: 1 eating, 0 not eating          (compare with BOGT/BIGT)
+    EATP   model probability of eating x 1000 (0 to 1000)
+    CHRT   chewing rate from the optical sensor, chews per minute x 10,
              in windows the model calls eating; 0 in windows it does not
 
 Each 8 s window's value fills its 80 samples. Nothing already in the table is
@@ -40,14 +41,14 @@ USAGE
 -----
     python write_results_to_database.py --config "%CFG%"            (dry run)
     python write_results_to_database.py --config "%CFG%" --write
-    python write_results_to_database.py --config "%CFG%" --identifiers EATDT2 EATPR2 EATCR2
+    python write_results_to_database.py --config "%CFG%" --identifiers EAD2 EAP2 CHR2
 
 process_database.py runs the same step at the end with --database dry-run or
 --database write, so one command does the whole inference.
 
 To find the rows afterwards:
     SELECT participantID, studyID, data_identifier, data_timestamp
-    FROM study_data.numeric_data WHERE data_identifier IN ('EATDET','EATPRB','EATCHR');
+    FROM study_data.numeric_data WHERE data_identifier IN ('EATD','EATP','CHRT');
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ TABLE = f"{ets_data.STUDY_DB}.numeric_data"
 FS = 10.0                                   # samples per second, as the annotations
 DAY = 86400
 DAY_SAMPLES = int(DAY * FS)                 # 864000
-IDENTIFIERS = ("EATDET", "EATPRB", "EATCHR")
+IDENTIFIERS = ("EATD", "EATP", "CHRT")
 NOT_SCORED = -1
 REQUIRED = ("participantID", "studyID", "data_identifier", "data_timestamp",
             "data_duration", "data_sampling_frequency", "data_ndarray_pickle")
