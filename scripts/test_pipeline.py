@@ -539,6 +539,40 @@ def test_episode_chews_skip_the_bridged_pauses():
     assert row["chews_per_min"] == f"{24 / (4 * 8 / 60):.1f}", row
     assert row["chews_per_min_optical"] == "95.0", row
 
+
+def test_database_arrays_match_the_annotation_format():
+    from write_results_to_database import DAY, DAY_SAMPLES, NOT_SCORED, day_arrays
+    midnight = 1_770_000_000 - 1_770_000_000 % DAY
+    start = midnight + 3600.0                                   # 01:00
+    nan = float("nan")
+    windows = [(start, start + 8, 0.91, True, 72.4),
+               (start + 8, start + 16, 0.10, False, 60.0),      # rate ignored: not eating
+               (start + 16, start + 24, nan, False, nan),       # not scored
+               (start + 24, start + 32, 0.80, True, nan)]       # eating, no rate
+    days = day_arrays(windows)
+    assert list(days) == [midnight], days.keys()
+    decision, probability, rate = days[midnight]
+    assert all(a.dtype == np.int16 and a.size == DAY_SAMPLES for a in days[midnight])
+    i = 3600 * 10
+    assert (decision[i:i + 80] == 1).all() and (decision[i + 80:i + 160] == 0).all()
+    assert (decision[i + 160:i + 240] == NOT_SCORED).all()
+    assert (probability[i:i + 80] == 910).all() and (rate[i:i + 80] == 724).all()
+    assert (rate[i + 80:i + 160] == 0).all() and (rate[i + 240:i + 320] == NOT_SCORED).all()
+    assert (decision[:i] == NOT_SCORED).all() and (decision[i + 320:] == NOT_SCORED).all()
+    assert np.sum(decision == 1) == 160                         # 2 windows x 80 samples
+
+
+def test_a_window_across_midnight_is_split_between_the_two_days():
+    from write_results_to_database import DAY, DAY_SAMPLES, day_arrays
+    midnight = 1_770_000_000 - 1_770_000_000 % DAY
+    days = day_arrays([(midnight - 4.0, midnight + 4.0, 0.9, True, 70.0)])
+    assert sorted(days) == [midnight - DAY, midnight], days.keys()
+    assert (days[midnight - DAY][0][DAY_SAMPLES - 40:] == 1).all()
+    assert (days[midnight][0][:40] == 1).all() and days[midnight][0][40] == -1
+    shifted = day_arrays([(midnight + 3600.0, midnight + 3608.0, 0.9, True, 70.0)],
+                         day_offset=5 * 3600)                   # midnight at 05:00 UTC
+    assert list(shifted) == [midnight - DAY + 5 * 3600], shifted.keys()
+
 if __name__ == "__main__":
     failures = 0
     for name, function in sorted(globals().items()):

@@ -85,8 +85,12 @@ python process_database.py --config "%CFG%" --database dry-run
 ```
 
 `--database dry-run` also checks the database and reports what would be
-stored; `--database write` stores the detected episodes as new rows (insert
-only). The storage format awaits approval before the first write.
+stored; `--database write` stores the model's output in
+`study_data.numeric_data` in the same format as the annotations: record types
+`EATDET` (eating decision), `EATPRB` (probability x 1000) and `EATCHR`
+(chewing rate x 10), whole-day 10 Hz arrays with -1 where nothing was scored.
+Insert only, in one transaction; it refuses to run if those record types
+already exist.
 
 **One session**, with a plot against its annotations:
 
@@ -104,8 +108,8 @@ python test_pipeline.py
 ## Status
 
 - Model development and evaluation: complete; the model is frozen.
-- Inference: complete; writing results back to the database awaits approval
-  of the table and format.
+- Inference: complete, including the write-back to `study_data.numeric_data`
+  (the existing table, as Dr. Sazonov preferred; run the dry run first).
 - Paper: in progress, targeting IEEE SoutheastCon 2027.
 
 ## Contact

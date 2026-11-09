@@ -9,10 +9,7 @@ over each whole recording, and writes into --out (default database_results\):
     sessions\<participant>_<study>_episodes.csv   per episode, as detect_eating.py
     all_episodes.csv     every detected eating episode in the database, one row
                          each: participant, study, start, end, duration, mean
-                         probability, chews, chewing rate. With --database,
-                         these are then stored in study_data.numeric_data as
-                         a new record type (write_results_to_database.py:
-                         insert-only, dry run unless --database write).
+                         probability, chews, chewing rate
     sessions.csv         one row per recording: hours recorded and scored,
                          minutes of eating, episodes, chews and chewing rate;
                          for annotated sessions also F1, precision, recall and
@@ -20,6 +17,12 @@ over each whole recording, and writes into --out (default database_results\):
                          participant was used to train the model
     model.json           a copy of the model's record, so the results say
                          which model and threshold produced them
+
+With --database, the per-window output is then stored in
+study_data.numeric_data in the same format as the annotations: record types
+EATDET (decision), EATPRB (probability) and EATCHR (chewing rate), whole-day
+10 Hz arrays (write_results_to_database.py: insert-only, dry run unless
+--database write).
 
 Recordings already in --out are skipped, so an interrupted run picks up where
 it stopped; --overwrite redoes them. A recording that fails is reported and
@@ -158,8 +161,9 @@ def main() -> int:
                         help="after processing, store the episodes in the database "
                              "(write_results_to_database.py): dry-run checks and reports, "
                              "write inserts")
-    parser.add_argument("--identifier", default="EATDET",
-                        help="data_identifier for the stored episodes (must be unused)")
+    parser.add_argument("--identifiers", nargs=3, default=["EATDET", "EATPRB", "EATCHR"],
+                        metavar=("DECISION", "PROBABILITY", "RATE"),
+                        help="data_identifier for each stored record type (must be unused)")
     parser.add_argument("--list", action="store_true",
                         help="only list the recordings that would be processed")
     parser.add_argument("--overwrite", action="store_true",
@@ -234,7 +238,7 @@ def main() -> int:
     if args.database != "off":
         from write_results_to_database import store
         print(f"\n--- database ({args.database}) ---")
-        store(args, out, args.identifier, write=(args.database == "write"))
+        store(args, out, args.identifiers, write=(args.database == "write"))
     ok = [r for r in rows.values() if r.get("status") == "ok"]
     failed = [r for r in rows.values() if r.get("status", "ok") != "ok"]
     print(f"\n{len(ok)} recordings processed, {len(failed)} failed; "
