@@ -21,7 +21,7 @@ none of which exists yet:
 
     EATD   model decision: 1 eating, 0 not eating          (compare with BOGT/BIGT)
     EATP   model probability of eating x 1000 (0 to 1000)
-    CHRT   chewing rate from the optical sensor, chews per minute x 10,
+    EATR   chewing rate from the optical sensor, chews per minute x 10,
              in windows the model calls eating; 0 in windows it does not
 
 record_hash follows the lab convention for numeric_data,
@@ -46,14 +46,14 @@ USAGE
 -----
     python write_results_to_database.py --config "%CFG%"            (dry run)
     python write_results_to_database.py --config "%CFG%" --write
-    python write_results_to_database.py --config "%CFG%" --identifiers EAD2 EAP2 CHR2
+    python write_results_to_database.py --config "%CFG%" --identifiers EAD2 EAP2 EAR2
 
 process_database.py runs the same step at the end with --database dry-run or
 --database write, so one command does the whole inference.
 
 To find the rows afterwards:
     SELECT participantID, studyID, data_identifier, data_timestamp
-    FROM study_data.numeric_data WHERE data_identifier IN ('EATD','EATP','CHRT');
+    FROM study_data.numeric_data WHERE data_identifier IN ('EATD','EATP','EATR');
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ TABLE = f"{ets_data.STUDY_DB}.numeric_data"
 FS = 10.0                                   # samples per second, as the annotations
 DAY = 86400
 DAY_SAMPLES = int(DAY * FS)                 # 864000
-IDENTIFIERS = ("EATD", "EATP", "CHRT")
+IDENTIFIERS = ("EATD", "EATP", "EATR")
 NOT_SCORED = -1
 REQUIRED = ("participantID", "studyID", "data_identifier", "data_timestamp",
             "data_duration", "data_sampling_frequency", "data_ndarray_pickle")

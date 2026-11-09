@@ -20,7 +20,7 @@ over each whole recording, and writes into --out (default database_results\):
 
 With --database, the per-window output is then stored in
 study_data.numeric_data in the same format as the annotations: record types
-EATD (decision), EATP (probability) and CHRT (chewing rate), whole-day
+EATD (decision), EATP (probability) and EATR (chewing rate), whole-day
 10 Hz arrays (write_results_to_database.py: insert-only, dry run unless
 --database write).
 
@@ -161,7 +161,7 @@ def main() -> int:
                         help="after processing, store the episodes in the database "
                              "(write_results_to_database.py): dry-run checks and reports, "
                              "write inserts")
-    parser.add_argument("--identifiers", nargs=3, default=["EATD", "EATP", "CHRT"],
+    parser.add_argument("--identifiers", nargs=3, default=["EATD", "EATP", "EATR"],
                         metavar=("DECISION", "PROBABILITY", "RATE"),
                         help="data_identifier for each stored record type (must be unused)")
     parser.add_argument("--list", action="store_true",
