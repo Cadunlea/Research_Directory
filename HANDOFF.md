@@ -13,6 +13,27 @@ and pastes the output back. Everything below was measured that way.
 
 ---
 
+## UPDATE 09/11/26 — results written to the database (Activity 7 done)
+
+Dr. Sazonov preferred storing results in the existing table over a new one.
+`write_results_to_database.py --write` inserted 183 rows into
+`study_data.numeric_data` on 09/11/26: 61 recordings x 3 record types, 316 MB,
+one transaction, first row read back identical.
+
+- Format = the annotations' format (CHGT/BOGT/BIGT): one row per recording-day,
+  int16 array of 864000 samples (a day at 10 Hz from midnight), -1 = not scored.
+- `EATD` model decision (1/0), `EATP` probability x 1000, `EATR` optical chewing
+  rate x 10 (chews/min) in windows called eating, 0 elsewhere.
+- `record_hash` = lib_jitai `tuple_hash((studyID, participantID, data_identifier))`,
+  checked against the annotation rows first. deviceID copied from the sensor rows.
+  `data_processed_by_method` names the model and threshold (0.750).
+- `data_identifier` is CHAR(4). `CHRT` already exists (61 rows, someone else's;
+  ask Siavash what it is), hence `EATR`.
+- To rewrite with a new model: new identifiers (`--identifiers ...`); the script
+  refuses to add to existing ones and never deletes.
+- `storage.py` also has an `eating_episode` table (methodID, sttime,
+  AnnotatorID); not used. Ask whether episodes should go there too.
+
 ## UPDATE 04/11/26 — chewing rate from the optical rhythm; paper draft
 
 - The chew head's per-meal COUNT follows the annotations (held-out r 0.92) but
