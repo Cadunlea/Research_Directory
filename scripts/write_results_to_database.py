@@ -24,6 +24,11 @@ none of which exists yet:
     CHRT   chewing rate from the optical sensor, chews per minute x 10,
              in windows the model calls eating; 0 in windows it does not
 
+record_hash follows the lab convention for numeric_data,
+tuple_hash((studyID, participantID, data_identifier)) from lib_jitai's
+hashfunction.py; the dry run first proves it reproduces the annotation rows.
+deviceID is copied from the recording's sensor rows.
+
 Each 8 s window's value fills its 80 samples. Nothing already in the table is
 read for writing, changed or deleted.
 
@@ -55,10 +60,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import pickle
 import re
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,6 +137,21 @@ def column_width(sql_type) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def lab_tuple_hash(args):
+    """The lab's own hash function (lib_jitai/hashfunction.py), found next to
+    jitai_config.ini or at --lib-jitai."""
+    folder = getattr(args, "lib_jitai", None) or (
+        str(Path(args.config).resolve().parent) if getattr(args, "config", None) else None)
+    if folder and folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        from hashfunction import tuple_hash
+    except ImportError:
+        raise SystemExit("record_hash needs lib_jitai's hashfunction.py; pass "
+                         "--lib-jitai path\\to\\lib_jitai. Nothing written.") from None
+    return tuple_hash
+
+
 def store(args, results: Path, identifiers=IDENTIFIERS, write: bool = False) -> int:
     """Check the table, build the arrays and insert them (or only report, when
     write is False). Returns the number of rows inserted."""
@@ -166,15 +187,29 @@ def store(args, results: Path, identifiers=IDENTIFIERS, write: bool = False) -> 
             optional["data_processed_by_method"] = method[:w] if w else method
         if "deviceID" in described:
             optional["deviceID"] = None                 # filled per recording below
-        hash_needed = ("record_hash" in described and text(described["record_hash"][2]).upper() == "NO"
-                       and described["record_hash"][4] is None)
-        if hash_needed:
-            w = column_width(described["record_hash"][1])
-            kind = text(described["record_hash"][1]).lower()
-            if not ("char" in kind or "text" in kind) or (w and w < 32):
-                raise SystemExit(f"record_hash is required and is {described['record_hash'][1]}; "
-                                 f"ask Siavash what it should hold. Nothing written.")
+        if "record_hash" in described:
+            tuple_hash = lab_tuple_hash(args)
+            # The lab's convention for numeric_data (lib_jitai aimdata.py and the
+            # storage.py readers): tuple_hash((studyID, participantID, data_identifier)).
+            # Proven on the annotation rows before it is used for new ones.
+            sample = ets_data.query(conn, f"SELECT studyID, participantID, data_identifier, "
+                                          f"record_hash FROM {TABLE} WHERE data_identifier "
+                                          f"IN ('CHGT','BOGT','BIGT') LIMIT 6")
+            wrong = [r for r in sample if int(tuple_hash((text(r[0]), text(r[1]), text(r[2]))))
+                     != int(r[3])]
+            if not sample or wrong:
+                raise SystemExit(f"tuple_hash((studyID, participantID, data_identifier)) does not "
+                                 f"reproduce the annotation rows' record_hash ({len(wrong)} of "
+                                 f"{len(sample)} differ); ask Siavash. Nothing written.")
+            print(f"record_hash: lib_jitai tuple_hash reproduces all {len(sample)} annotation "
+                  f"rows checked")
             optional["record_hash"] = None
+        if "creation_timestamp" in described:
+            kind = text(described["creation_timestamp"][1]).lower()
+            if "int" in kind or "double" in kind or "float" in kind:
+                optional["creation_timestamp"] = int(time.time())
+            elif "date" in kind or "time" in kind:
+                optional["creation_timestamp"] = datetime.now(timezone.utc).replace(tzinfo=None)
         columns += list(optional)
         left_out = [c for c, d in described.items()
                     if c not in columns and text(d[2]).upper() == "NO" and d[4] is None
@@ -218,8 +253,7 @@ def store(args, results: Path, identifiers=IDENTIFIERS, write: bool = False) -> 
                         if c == "deviceID":
                             extra.append(device)
                         elif c == "record_hash":
-                            extra.append(hashlib.md5(f"{study}|{participant}|{identifier}|{day}"
-                                                     .encode()).hexdigest())
+                            extra.append(int(tuple_hash((study, participant, identifier))))
                         else:
                             extra.append(optional[c])
                     rows.append((participant, study, identifier, int(day), DAY_SAMPLES, FS,
@@ -295,6 +329,8 @@ def main() -> int:
     parser.add_argument("--identifiers", nargs=3, default=list(IDENTIFIERS),
                         metavar=("DECISION", "PROBABILITY", "RATE"),
                         help="data_identifier for each record type (must be unused)")
+    parser.add_argument("--lib-jitai", default=None,
+                        help="folder with hashfunction.py (default: the --config file's folder)")
     parser.add_argument("--write", action="store_true",
                         help="actually insert; without it nothing is written")
     args = parser.parse_args()
