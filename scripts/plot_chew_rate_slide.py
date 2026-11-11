@@ -50,6 +50,9 @@ def main() -> int:
                         help="meals need at least this many eating windows (default 5, "
                              "as in chew_rate_check.py)")
     parser.add_argument("--out", default=str(Path("figures") / "chew_rate_slide"))
+    parser.add_argument("--trend", action="store_true",
+                        help="also draw the least-squares trend line (solid) next to the "
+                             "perfect-agreement line (dashed), with a legend")
     args = parser.parse_args()
     plt.rcParams.update({"font.family": "sans-serif",
                          "font.sans-serif": ["Arial", "Liberation Sans", "DejaVu Sans"],
@@ -94,8 +97,17 @@ def main() -> int:
     for axis, true, est, title, xlabel, ylabel, r, e in panels:
         low = min(true.min(), est.min()) * 0.9
         high = max(true.max(), est.max()) * 1.05
-        axis.plot([low, high], [low, high], color=MID, linestyle="--", linewidth=1)
+        axis.plot([low, high], [low, high], color=MID, linestyle="--", linewidth=1,
+                  label="perfect agreement")
         axis.plot(true, est, "o", markerfacecolor="white", markeredgecolor=INK, markersize=7)
+        if args.trend:
+            slope, intercept = np.polyfit(true, est, 1)
+            xs = np.array([true.min(), true.max()])
+            axis.plot(xs, slope * xs + intercept, color=INK, linewidth=1.8,
+                      label=f"trend (slope {slope:.2f})")
+            axis.legend(loc="upper left", frameon=False, fontsize=11)
+            print(f"  {title.split(' (')[0].lower()}: trend slope {slope:.2f} "
+                  f"(1.00 = no compression)")
         axis.set_xlim(low, high)
         axis.set_ylim(low, high)
         axis.set_aspect("equal", adjustable="box")
