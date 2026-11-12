@@ -1,6 +1,10 @@
 r"""
 plot_chew_rate_slide.py - the chewing-rate figure for the slides, from peak counting only.
 
+By default the rate is over the whole meal (Dr. Sazonov's definition: total
+chews / meal length from the first to the last eating window, pauses
+included); --rate chewing gives chews / minutes of eating windows instead.
+
 Two panels, one dot per meal, both from counting peaks in the optical (jaw)
 signal in the annotated eating windows (no model, no training, so every meal
 is a fair test):
@@ -50,6 +54,10 @@ def main() -> int:
                         help="meals need at least this many eating windows (default 5, "
                              "as in chew_rate_check.py)")
     parser.add_argument("--out", default=str(Path("figures") / "chew_rate_slide"))
+    parser.add_argument("--rate", choices=("meal", "chewing"), default="meal",
+                        help="meal (default): chews / meal length, first to last eating window, "
+                             "pauses included (Dr. Sazonov's definition); chewing: chews / "
+                             "minutes of eating windows only")
     parser.add_argument("--trend", action="store_true",
                         help="also draw the least-squares trend line (solid) next to the "
                              "perfect-agreement line (dashed), with a legend")
@@ -63,19 +71,28 @@ def main() -> int:
     fs = ets_data.SENSOR_FS
     grid = ets_train.evaluation_grid(w.participants, w.studies, w.starts,
                                      w.window_seconds, w.hop_seconds)
-    rows = np.flatnonzero(grid & (w.y == 1))
-    peaks = peak_rate(optical(w.X[rows]), fs) * w.window_seconds / 60   # peaks per window
-    minutes_per_window = w.window_seconds / 60
+    on_grid = np.flatnonzero(grid)
+    rows = on_grid[w.y[on_grid] == 1]                       # annotated eating windows
+    peaks = np.zeros(len(w.y))
+    peaks[rows] = peak_rate(optical(w.X[rows]), fs) * w.window_seconds / 60   # peaks per window
 
     true_chews, est_chews, minutes = [], [], []
     keys = sorted({(p, s) for p, s in zip(w.participants[rows], w.studies[rows])})
     for person, study in keys:
-        idx = np.flatnonzero((w.participants[rows] == person) & (w.studies[rows] == study))
-        if len(idx) < args.min_windows:
+        mine = on_grid[(w.participants[on_grid] == person) & (w.studies[on_grid] == study)]
+        eat = mine[w.y[mine] == 1]
+        if len(eat) < args.min_windows:
             continue
-        true_chews.append(float(w.chews[rows][idx].sum()))
-        est_chews.append(float(peaks[idx].sum()))
-        minutes.append(len(idx) * minutes_per_window)
+        est_chews.append(float(peaks[eat].sum()))       # peaks only inside eating windows
+        if args.rate == "meal":
+            # Meal = first to last eating window; annotated chews over that whole span.
+            first, last = w.starts[eat].min(), w.starts[eat].max() + w.window_seconds
+            span = mine[(w.starts[mine] >= first) & (w.starts[mine] < last)]
+            true_chews.append(float(w.chews[span].sum()))
+            minutes.append((last - first) / 60)
+        else:
+            true_chews.append(float(w.chews[eat].sum()))
+            minutes.append(len(eat) * w.window_seconds / 60)
     true_chews, est_chews, minutes = map(np.array, (true_chews, est_chews, minutes))
     true_rate, est_rate = true_chews / minutes, est_chews / minutes
     if len(true_rate) < 3:
@@ -92,7 +109,9 @@ def main() -> int:
     figure, axes = plt.subplots(1, 2, figsize=(10.5, 4.6))
     panels = ((axes[0], true_chews, est_chews, "Chews per meal", "Annotated chews",
                "Counted peaks", r_c, e_c),
-              (axes[1], true_rate, est_rate, "Chewing rate (chews per minute)",
+              (axes[1], true_rate, est_rate,
+               "Chewing rate over the meal" if args.rate == "meal" else
+               "Chewing rate while chewing",
                "Annotated rate", "Estimated rate", r_r, e_r))
     for axis, true, est, title, xlabel, ylabel, r, e in panels:
         low = min(true.min(), est.min()) * 0.9
@@ -111,7 +130,9 @@ def main() -> int:
         axis.set_xlim(low, high)
         axis.set_ylim(low, high)
         axis.set_aspect("equal", adjustable="box")
-        axis.set_title(f"{title}\nr = {r:.2f}, median error {e:.0%}", loc="left", fontsize=13)
+        unit = " (chews/min)" if title.startswith("Chewing rate") else ""
+        axis.set_title(f"{title}{unit}\nr = {r:.2f}, median error {e:.0%}", loc="left",
+                       fontsize=13)
         axis.set_xlabel(xlabel)
         axis.set_ylabel(ylabel)
     figure.tight_layout()
