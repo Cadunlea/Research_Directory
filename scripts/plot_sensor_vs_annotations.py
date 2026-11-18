@@ -210,6 +210,9 @@ def main() -> int:
     parser.add_argument("--utc-offset", type=int, default=None,
                         help="hours of the annotation clock relative to UTC (Central: -5 summer, -6 winter)")
     parser.add_argument("--show", action="store_true", help="also open the figure in a window")
+    parser.add_argument("--slide", action="store_true",
+                        help="also write three large-text figures for slides, with no participant "
+                             "ID and time in minutes: <out>_sensors, <out>_annotations, <out>_example")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
     if not args.config and os.environ.get("CFG"):
@@ -316,9 +319,81 @@ def main() -> int:
     for suffix in (".png", ".pdf"):
         figure.savefig(out.with_suffix(suffix), dpi=200)
     print(f"wrote {out.with_suffix('.png')}")
+    if args.slide:
+        slide_figures(out, sensor_t, sensor, step, ann_t, eating, bout, bite, chew, model,
+                      start, end)
     if args.show:
         plt.show()
     return 0
+
+
+def slide_figures(out, sensor_t, sensor, step, ann_t, eating, bout, bite, chew, model,
+                  start, end):
+    """Three figures for slides: large text, time in minutes from the start of
+    the plot, and no participant ID or clock time anywhere on them."""
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({"font.size": 16})
+    t0 = start
+    minutes = lambda t: (np.asarray(t) - t0) / 60                       # noqa: E731
+    edges = list(zip(*[np.flatnonzero(np.diff(np.r_[0, eating.astype(int), 0]) == k)
+                       for k in (1, -1)]))
+
+    def shade(axis):
+        for a, b in edges:
+            axis.axvspan(minutes(ann_t[a]), minutes(ann_t[b - 1] + 0.1), color=LIGHT,
+                         linewidth=0, zorder=0)
+
+    def finish(figure, axes, name):
+        axes[-1].set_xlabel("Time (minutes)")
+        axes[-1].set_xlim(0, minutes(end))
+        figure.tight_layout()
+        path = out.with_name(out.name + f"_{name}")
+        for suffix in (".png", ".pdf"):
+            figure.savefig(path.with_suffix(suffix), dpi=200)
+        print(f"wrote {path.with_suffix('.png')}")
+
+    # 1. Sensor signals, eating shaded.
+    figure, axes = plt.subplots(4, 1, figsize=(8, 6.5), sharex=True)
+    for i, name in enumerate(("Acc X", "Acc Y", "Acc Z", "Optical")):
+        axes[i].plot(minutes(sensor_t[::step]), sensor[::step, i], color=INK, linewidth=0.6)
+        axes[i].set_ylabel(name, rotation=0, ha="right", va="center")
+        axes[i].set_yticks([])
+        shade(axes[i])
+    finish(figure, axes, "sensors")
+
+    # 2. Annotation tracks.
+    figure, axes = plt.subplots(4, 1, figsize=(8, 6.5), sharex=True)
+    for axis, values, name in zip(axes, (eating, bout > 0, bite > 0, chew > 0),
+                                  ("Eating", "Chew bout", "Bite", "Chew")):
+        axis.fill_between(minutes(ann_t), 0, np.asarray(values, float), step="post",
+                          color=MID, linewidth=0)
+        axis.set_ylim(0, 1.15)
+        axis.set_yticks([])
+        axis.set_ylabel(name, rotation=0, ha="right", va="center")
+    finish(figure, axes, "annotations")
+
+    # 3. Annotated eating and the model's probability (needs --windows or --run).
+    if model:
+        starts, p, thr, window, _ = model
+        inside = (starts + window > start) & (starts < end)
+        starts, p, thr = starts[inside], p[inside], thr[inside]
+        figure, axes = plt.subplots(2, 1, figsize=(12, 4.6), sharex=True,
+                                    gridspec_kw={"height_ratios": [1, 2.4]})
+        axes[0].fill_between(minutes(ann_t), 0, eating.astype(float), step="post",
+                             color=MID, linewidth=0)
+        axes[0].set_ylim(0, 1.15)
+        axes[0].set_yticks([])
+        axes[0].set_ylabel("Annotated\neating", rotation=0, ha="right", va="center")
+        shade(axes[1])
+        if len(starts):
+            axes[1].step(minutes(np.r_[starts, starts[-1] + window]), np.r_[p, p[-1]],
+                         where="post", color=INK, linewidth=1.4)
+            if np.isfinite(thr).any():
+                axes[1].axhline(float(np.nanmedian(thr)), color=INK, linestyle="--",
+                                linewidth=1.2)
+        axes[1].set_ylim(0, 1)
+        axes[1].set_ylabel("Probability\nof eating")
+        finish(figure, axes, "example")
 
 
 if __name__ == "__main__":
